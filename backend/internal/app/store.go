@@ -25,6 +25,7 @@ var (
 	ErrNotFound      = errors.New("not found")
 	ErrInvalidParent = errors.New("invalid parent")
 	ErrInvalidName   = errors.New("name is required")
+	ErrInvalidOrder  = errors.New("invalid node order")
 )
 
 type Node struct {
@@ -199,6 +200,76 @@ func (s *Store) RenameNode(projectID, nodeID, name string) (Node, error) {
 		return Node{}, err
 	}
 	return project.Nodes[nodeIndex], nil
+}
+
+func (s *Store) MoveNode(projectID, nodeID, parentID string, nodeIDs []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	projectIndex := s.projectIndex(projectID)
+	if projectIndex < 0 {
+		return ErrNotFound
+	}
+	project := &s.data.Projects[projectIndex]
+	if len(nodeIDs) == 0 || nodeID == "" {
+		return ErrInvalidOrder
+	}
+
+	nodesByID := make(map[string]Node, len(project.Nodes))
+	for _, node := range project.Nodes {
+		nodesByID[node.ID] = node
+	}
+	moving, ok := nodesByID[nodeID]
+	if !ok {
+		return ErrInvalidOrder
+	}
+	if !validParent(*project, moving.Kind, parentID) {
+		return ErrInvalidParent
+	}
+
+	isTargetSibling := func(node Node) bool {
+		return node.ID != nodeID && node.Kind == moving.Kind && node.ParentID == parentID
+	}
+	targetSiblingCount := 0
+	for _, node := range project.Nodes {
+		if isTargetSibling(node) {
+			targetSiblingCount++
+		}
+	}
+	if len(nodeIDs) != targetSiblingCount+1 {
+		return ErrInvalidOrder
+	}
+
+	ordered := make([]Node, 0, len(nodeIDs))
+	seen := make(map[string]bool, len(nodeIDs))
+	for _, id := range nodeIDs {
+		node, exists := nodesByID[id]
+		if !exists || seen[id] || (id != nodeID && !isTargetSibling(node)) {
+			return ErrInvalidOrder
+		}
+		if id == nodeID {
+			node.ParentID = parentID
+		}
+		seen[id] = true
+		ordered = append(ordered, node)
+	}
+	if !seen[nodeID] {
+		return ErrInvalidOrder
+	}
+
+	previous := append([]Node(nil), project.Nodes...)
+	reordered := make([]Node, 0, len(project.Nodes))
+	for _, node := range project.Nodes {
+		if !seen[node.ID] {
+			reordered = append(reordered, node)
+		}
+	}
+	project.Nodes = append(reordered, ordered...)
+	if err := s.saveLocked(); err != nil {
+		project.Nodes = previous
+		return err
+	}
+	return nil
 }
 
 func (s *Store) DeleteNode(projectID, nodeID string) error {

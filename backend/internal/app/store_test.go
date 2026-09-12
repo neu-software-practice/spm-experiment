@@ -87,3 +87,80 @@ func TestEmptyProjectReturnsEmptyNodeList(t *testing.T) {
 		t.Fatal("empty project nodes must be an empty slice, not nil")
 	}
 }
+
+func TestStoreReordersOnlySiblingsAndPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spm.json")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject("排序项目")
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, _ := store.CreateNode(project.ID, KindRole, "", "用户")
+	otherRole, _ := store.CreateNode(project.ID, KindRole, "", "管理员")
+	first, _ := store.CreateNode(project.ID, KindEpic, role.ID, "第一个")
+	second, _ := store.CreateNode(project.ID, KindEpic, role.ID, "第二个")
+	other, _ := store.CreateNode(project.ID, KindEpic, otherRole.ID, "其他分组")
+
+	if err := store.MoveNode(project.ID, second.ID, role.ID, []string{second.ID, first.ID}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := reopened.Project(project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var siblingIDs []string
+	for _, node := range loaded.Nodes {
+		if node.Kind == KindEpic && node.ParentID == role.ID {
+			siblingIDs = append(siblingIDs, node.ID)
+		}
+	}
+	if len(siblingIDs) != 2 || siblingIDs[0] != second.ID || siblingIDs[1] != first.ID {
+		t.Fatalf("unexpected sibling order: %v", siblingIDs)
+	}
+	if err := reopened.MoveNode(project.ID, first.ID, role.ID, []string{first.ID, other.ID}); !errors.Is(err, ErrInvalidOrder) {
+		t.Fatalf("got %v, want ErrInvalidOrder", err)
+	}
+}
+
+func TestStoreMovesNodeAcrossParents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spm.json")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject("跨父节点移动")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRole, _ := store.CreateNode(project.ID, KindRole, "", "用户")
+	secondRole, _ := store.CreateNode(project.ID, KindRole, "", "管理员")
+	moving, _ := store.CreateNode(project.ID, KindEpic, firstRole.ID, "待移动")
+	target, _ := store.CreateNode(project.ID, KindEpic, secondRole.ID, "目标节点")
+
+	if err := store.MoveNode(project.ID, moving.ID, secondRole.ID, []string{target.ID, moving.ID}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Project(project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var targetIDs []string
+	for _, node := range loaded.Nodes {
+		if node.Kind == KindEpic && node.ParentID == secondRole.ID {
+			targetIDs = append(targetIDs, node.ID)
+		}
+	}
+	if len(targetIDs) != 2 || targetIDs[0] != target.ID || targetIDs[1] != moving.ID {
+		t.Fatalf("unexpected target order: %v", targetIDs)
+	}
+	if err := store.MoveNode(project.ID, moving.ID, target.ID, []string{moving.ID}); !errors.Is(err, ErrInvalidParent) {
+		t.Fatalf("got %v, want ErrInvalidParent", err)
+	}
+}

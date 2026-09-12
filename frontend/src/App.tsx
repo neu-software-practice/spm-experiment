@@ -3,6 +3,7 @@ import {
   Check,
   Folder,
   FolderKanban,
+  GripVertical,
   LoaderCircle,
   MoreHorizontal,
   Pencil,
@@ -10,7 +11,25 @@ import {
   Save,
   Trash2,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react'
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  horizontalListSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -119,6 +138,12 @@ const nodePrompts: Record<NodeKind | 'project', string> = {
   substory: '例如：添加封面图片',
 }
 
+const parentKinds: Partial<Record<NodeKind, NodeKind>> = {
+  epic: 'role',
+  story: 'epic',
+  substory: 'story',
+}
+
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...options,
@@ -138,16 +163,34 @@ function childrenOf(nodes: StoryNode[], parentId: string, kind: NodeKind) {
   return nodes.filter((node) => node.parentId === parentId && node.kind === kind)
 }
 
+function moveNode(nodes: StoryNode[], nodeID: string, parentID: string, orderedIDs: string[]) {
+  const nodesByID = new Map(nodes.map((node) => [node.id, node]))
+  const moved = nodesByID.get(nodeID)
+  if (!moved) return nodes
+
+  const ordered = orderedIDs.map((id) => {
+    const node = nodesByID.get(id)!
+    if (id !== nodeID) return node
+    if (parentID) return { ...node, parentId: parentID }
+    const { parentId: _, ...rootNode } = node
+    return rootNode
+  })
+  const targetIDs = new Set(orderedIDs)
+  return [...nodes.filter((node) => !targetIDs.has(node.id)), ...ordered]
+}
+
 function NodeCard({
   node,
   selected,
   onSelect,
   onAdd,
+  dragHandle,
 }: {
   node: StoryNode
   selected: boolean
   onSelect: (node: StoryNode) => void
   onAdd?: () => void
+  dragHandle?: ReactNode
 }) {
   return (
     <div className="node-slot group/node">
@@ -185,6 +228,67 @@ function NodeCard({
           <Plus />
         </Button>
       )}
+      {dragHandle}
+    </div>
+  )
+}
+
+function SortableBranch({
+  node,
+  selected,
+  sorting,
+  onSelect,
+  onAdd,
+  children,
+}: {
+  node: StoryNode
+  selected: boolean
+  sorting: boolean
+  onSelect: (node: StoryNode) => void
+  onAdd?: () => void
+  children?: ReactNode
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: node.id, disabled: sorting })
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 20 : undefined,
+    opacity: isDragging ? 0.7 : undefined,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} className="map-branch">
+      <NodeCard
+        node={node}
+        selected={selected}
+        onSelect={onSelect}
+        onAdd={onAdd}
+        dragHandle={
+          <Button
+            ref={setActivatorNodeRef}
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="absolute top-2 right-2 z-10 cursor-grab touch-none text-muted-foreground active:cursor-grabbing"
+            onClick={(event) => event.stopPropagation()}
+            aria-label={`拖拽${node.name}排序`}
+            title="拖拽排序"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical />
+          </Button>
+        }
+      />
+      {children}
     </div>
   )
 }
@@ -192,6 +296,7 @@ function NodeCard({
 type BranchProps = {
   nodes: StoryNode[]
   selectedId?: string
+  sorting: boolean
   onSelect: (node: StoryNode) => void
   onCreate: (target: CreateTarget) => void
 }
@@ -199,61 +304,71 @@ type BranchProps = {
 function StoryBranch({ story, ...props }: BranchProps & { story: StoryNode }) {
   const substories = childrenOf(props.nodes, story.id, 'substory')
   return (
-    <div className="map-branch">
-      <NodeCard
-        node={story}
-        selected={props.selectedId === story.id}
-        onSelect={props.onSelect}
-        onAdd={() => props.onCreate({ kind: 'substory', parentId: story.id })}
-      />
+    <SortableBranch
+      node={story}
+      selected={props.selectedId === story.id}
+      sorting={props.sorting}
+      onSelect={props.onSelect}
+      onAdd={() => props.onCreate({ kind: 'substory', parentId: story.id })}
+    >
       {substories.length > 0 && (
-        <div className="branch-children">
-          {substories.map((node) => (
-            <div className="map-branch" key={node.id}>
-              <NodeCard node={node} selected={props.selectedId === node.id} onSelect={props.onSelect} />
-            </div>
-          ))}
-        </div>
+        <SortableContext items={substories.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
+          <div className="branch-children">
+            {substories.map((node) => (
+              <SortableBranch
+                key={node.id}
+                node={node}
+                selected={props.selectedId === node.id}
+                sorting={props.sorting}
+                onSelect={props.onSelect}
+              />
+            ))}
+          </div>
+        </SortableContext>
       )}
-    </div>
+    </SortableBranch>
   )
 }
 
 function EpicBranch({ epic, ...props }: BranchProps & { epic: StoryNode }) {
   const stories = childrenOf(props.nodes, epic.id, 'story')
   return (
-    <div className="map-branch">
-      <NodeCard
-        node={epic}
-        selected={props.selectedId === epic.id}
-        onSelect={props.onSelect}
-        onAdd={() => props.onCreate({ kind: 'story', parentId: epic.id })}
-      />
+    <SortableBranch
+      node={epic}
+      selected={props.selectedId === epic.id}
+      sorting={props.sorting}
+      onSelect={props.onSelect}
+      onAdd={() => props.onCreate({ kind: 'story', parentId: epic.id })}
+    >
       {stories.length > 0 && (
-        <div className="branch-children">
-          {stories.map((story) => <StoryBranch key={story.id} story={story} {...props} />)}
-        </div>
+        <SortableContext items={stories.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
+          <div className="branch-children">
+            {stories.map((story) => <StoryBranch key={story.id} story={story} {...props} />)}
+          </div>
+        </SortableContext>
       )}
-    </div>
+    </SortableBranch>
   )
 }
 
 function RoleBranch({ role, ...props }: BranchProps & { role: StoryNode }) {
   const epics = childrenOf(props.nodes, role.id, 'epic')
   return (
-    <div className="map-branch">
-      <NodeCard
-        node={role}
-        selected={props.selectedId === role.id}
-        onSelect={props.onSelect}
-        onAdd={() => props.onCreate({ kind: 'epic', parentId: role.id })}
-      />
+    <SortableBranch
+      node={role}
+      selected={props.selectedId === role.id}
+      sorting={props.sorting}
+      onSelect={props.onSelect}
+      onAdd={() => props.onCreate({ kind: 'epic', parentId: role.id })}
+    >
       {epics.length > 0 && (
-        <div className="branch-children">
-          {epics.map((epic) => <EpicBranch key={epic.id} epic={epic} {...props} />)}
-        </div>
+        <SortableContext items={epics.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
+          <div className="branch-children">
+            {epics.map((epic) => <EpicBranch key={epic.id} epic={epic} {...props} />)}
+          </div>
+        </SortableContext>
       )}
-    </div>
+    </SortableBranch>
   )
 }
 
@@ -513,7 +628,13 @@ function App() {
   const [renameProjectOpen, setRenameProjectOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [sorting, setSorting] = useState(false)
   const [error, setError] = useState<string>()
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   const selectedNode = (project?.nodes ?? []).find((node) => node.id === selectedId)
   const nodesByKind = useMemo(() => ({
@@ -657,13 +778,62 @@ function App() {
     }
   }
 
-  const parentKind: Partial<Record<NodeKind, NodeKind>> = {
-    epic: 'role',
-    story: 'epic',
-    substory: 'story',
+  const reorderNodes = async ({ active, over }: DragEndEvent) => {
+    if (!project || !over || active.id === over.id || sorting) return
+
+    const nodes = project.nodes ?? []
+    const activeNode = nodes.find((node) => node.id === String(active.id))
+    const overNode = nodes.find((node) => node.id === String(over.id))
+    if (!activeNode || !overNode) return
+    let parentID: string
+    let orderedIDs: string[]
+
+    if (overNode.kind === activeNode.kind) {
+      parentID = overNode.parentId ?? ''
+      const targetSiblings = nodes.filter((node) =>
+        node.kind === activeNode.kind && (node.parentId ?? '') === parentID,
+      )
+      if ((activeNode.parentId ?? '') === parentID) {
+        const oldIndex = targetSiblings.findIndex((node) => node.id === activeNode.id)
+        const newIndex = targetSiblings.findIndex((node) => node.id === overNode.id)
+        if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return
+        orderedIDs = arrayMove(targetSiblings, oldIndex, newIndex).map((node) => node.id)
+      } else {
+        const withoutMoving = targetSiblings.filter((node) => node.id !== activeNode.id)
+        const newIndex = withoutMoving.findIndex((node) => node.id === overNode.id)
+        if (newIndex < 0) return
+        const targetOrder = [...withoutMoving]
+        targetOrder.splice(newIndex, 0, activeNode)
+        orderedIDs = targetOrder.map((node) => node.id)
+      }
+    } else if (parentKinds[activeNode.kind] === overNode.kind) {
+      parentID = overNode.id
+      orderedIDs = nodes
+        .filter((node) => node.id !== activeNode.id && node.kind === activeNode.kind && node.parentId === parentID)
+        .map((node) => node.id)
+      orderedIDs.push(activeNode.id)
+    } else {
+      return
+    }
+
+    const previous = project
+    setProject({ ...project, nodes: moveNode(nodes, activeNode.id, parentID, orderedIDs) })
+    setSorting(true)
+    try {
+      await api<void>(`/api/projects/${project.id}/nodes/order`, {
+        method: 'PUT',
+        body: JSON.stringify({ nodeId: activeNode.id, parentId: parentID, nodeIds: orderedIDs }),
+      })
+    } catch (reason) {
+      setProject((current) => current?.id === previous.id ? previous : current)
+      showError(reason)
+    } finally {
+      setSorting(false)
+    }
   }
+
   const createParentKind = createTarget && createTarget.kind !== 'project'
-    ? parentKind[createTarget.kind]
+    ? parentKinds[createTarget.kind]
     : undefined
   const createParents = createParentKind ? nodesByKind[createParentKind] : []
 
@@ -729,18 +899,27 @@ function App() {
                 <span>用户故事</span>
                 <span>二级故事</span>
               </div>
-              <div className="story-map">
-                {nodesByKind.role.map((role) => (
-                  <RoleBranch
-                    key={role.id}
-                    role={role}
-                    nodes={project.nodes}
-                    selectedId={selectedId}
-                    onSelect={(node) => setSelectedId(node.id)}
-                    onCreate={setCreateTarget}
-                  />
-                ))}
-              </div>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={(event) => void reorderNodes(event)}
+              >
+                <SortableContext items={nodesByKind.role.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
+                  <div className="story-map">
+                    {nodesByKind.role.map((role) => (
+                      <RoleBranch
+                        key={role.id}
+                        role={role}
+                        nodes={project.nodes ?? []}
+                        selectedId={selectedId}
+                        sorting={sorting}
+                        onSelect={(node) => setSelectedId(node.id)}
+                        onCreate={setCreateTarget}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
             </section>
           )}
         </SidebarInset>
