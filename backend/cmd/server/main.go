@@ -1,24 +1,29 @@
 package main
 
 import (
-	"net/http"
+	"log"
 	"os"
 
-	"github.com/gin-gonic/gin"
+	"spm-experiment/internal/app"
 )
 
 func main() {
-	router := gin.Default()
-	router.GET("/api/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
+	dataFile := os.Getenv("DATA_FILE")
+	if dataFile == "" {
+		dataFile = "data/spm.json"
+	}
+
+	store, err := app.OpenStore(dataFile)
+	if err != nil {
+		log.Fatalf("open data store: %v", err)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	if err := router.Run(":" + port); err != nil {
-		panic(err)
+	if err := app.NewRouter(store).Run(":" + port); err != nil {
+		log.Fatal(err)
 	}
 }
