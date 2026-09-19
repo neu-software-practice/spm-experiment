@@ -31,7 +31,6 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -99,6 +98,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { sortableTransformToString } from '@/sortable-transform'
 import './App.css'
 
 type NodeKind = 'role' | 'epic' | 'story' | 'substory'
@@ -280,7 +280,7 @@ function SortableBranch({
     isOver,
   } = useSortable({ id: node.id, disabled: sorting, data: { kind: node.kind } })
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    transform: sortableTransformToString(transform),
     transition,
     zIndex: isDragging ? 20 : undefined,
     opacity: isDragging ? 0.7 : undefined,
