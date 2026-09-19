@@ -156,7 +156,9 @@ const snapToNodeCollision: CollisionDetection = (args) => {
   const droppableRects = new Map(args.droppableRects)
 
   for (const container of droppableContainers) {
-    const node = container.node.current?.querySelector<HTMLElement>(':scope > .node-slot')
+    const node = container.node.current?.querySelector<HTMLElement>(
+      ':scope > .branch-visual > .node-slot',
+    )
     if (node) droppableRects.set(container.id, node.getBoundingClientRect())
   }
 
@@ -285,36 +287,40 @@ function SortableBranch({
     zIndex: isDragging ? 20 : undefined,
     opacity: isDragging ? 0.7 : undefined,
   }
+  const isTransforming = Boolean(transform || transition)
+  const hasChildren = Boolean(children)
 
   return (
     <div
       ref={setNodeRef}
-      style={style}
-      className={`map-branch${isDragging ? ' is-dragging' : ''}${isOver && !isDragging ? ' is-drop-target' : ''}`}
+      className={`map-branch${isTransforming ? ' is-transforming' : ''}${isDragging ? ' is-dragging' : ''}${isOver && !isDragging ? ' is-drop-target' : ''}`}
     >
-      <NodeCard
-        node={node}
-        selected={selected}
-        onSelect={onSelect}
-        onAdd={onAdd}
-        dragHandle={
-          <Button
-            ref={setActivatorNodeRef}
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="absolute top-2 right-2 z-10 cursor-grab touch-none text-muted-foreground active:cursor-grabbing"
-            onClick={(event) => event.stopPropagation()}
-            aria-label={`拖拽${node.name}排序`}
-            title="拖拽排序"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical />
-          </Button>
-        }
-      />
-      {children}
+      <div className="branch-visual" style={style}>
+        <NodeCard
+          node={node}
+          selected={selected}
+          onSelect={onSelect}
+          onAdd={onAdd}
+          dragHandle={
+            <Button
+              ref={setActivatorNodeRef}
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="absolute top-2 right-2 z-10 cursor-grab touch-none text-muted-foreground active:cursor-grabbing"
+              onClick={(event) => event.stopPropagation()}
+              aria-label={`拖拽${node.name}排序`}
+              title="拖拽排序"
+              {...attributes}
+              {...listeners}
+            >
+              <GripVertical />
+            </Button>
+          }
+        />
+        {children}
+      </div>
+      {hasChildren && <span className="branch-outgoing-connector" aria-hidden="true" />}
     </div>
   )
 }

@@ -55,6 +55,15 @@
   flex-direction: column;
 }
 
+.branch-visual {
+  position: relative;
+  display: flex;
+  width: max-content;
+  min-width: 8rem;
+  align-items: flex-start;
+  flex-direction: column;
+}
+
 .node-slot {
   position: relative;
   width: 8rem;
@@ -99,13 +108,13 @@
   transform: scale(1.06);
 }
 
-.map-branch.is-drop-target > .node-slot .story-node {
+.map-branch.is-drop-target > .branch-visual > .node-slot .story-node {
   outline: 3px solid color-mix(in oklch, var(--ring), transparent 24%);
   outline-offset: 4px;
   box-shadow: 0 0 0 7px color-mix(in oklch, var(--ring), transparent 88%);
 }
 
-.map-branch.is-dragging > .node-slot .story-node {
+.map-branch.is-dragging > .branch-visual > .node-slot .story-node {
   cursor: grabbing;
 }
 
@@ -120,38 +129,45 @@
   margin-top: 2rem;
 }
 
-.branch-children::before {
+.branch-outgoing-connector {
   position: absolute;
-  top: -1rem;
-  right: 4rem;
+  top: 8rem;
   left: 4rem;
-  height: 1px;
-  content: '';
-  background: var(--map-connector);
-}
-
-.branch-children:has(> .row-add-slot)::before {
-  right: 8rem;
-}
-
-.map-branch:has(> .branch-children) > .node-slot::after {
-  position: absolute;
-  top: 100%;
-  left: 50%;
   width: 1px;
   height: 1rem;
-  content: '';
+  pointer-events: none;
   background: var(--map-connector);
 }
 
 .branch-children > .map-branch::before {
   position: absolute;
-  bottom: 100%;
+  top: -1rem;
   left: 4rem;
   width: 1px;
   height: 1rem;
   content: '';
   background: var(--map-connector);
+}
+
+.branch-children > .map-branch:not(:has(+ .row-add-slot))::after {
+  position: absolute;
+  top: -1rem;
+  left: 4rem;
+  width: calc(100% + 1rem);
+  height: 1px;
+  content: '';
+  background: var(--map-connector);
+}
+
+.branch-children:has(> .map-branch.is-transforming) > .map-branch::before,
+.branch-children:has(> .map-branch.is-transforming) > .map-branch::after,
+.map-branch:has(> .branch-visual > .branch-children > .map-branch.is-transforming) > .branch-outgoing-connector,
+.map-branch.is-transforming::before,
+.map-branch.is-transforming::after,
+.map-branch.is-transforming .map-branch::before,
+.map-branch.is-transforming .map-branch::after,
+.map-branch.is-transforming .branch-outgoing-connector {
+  opacity: 0;
 }
 
 @media (max-width: 767px) {
