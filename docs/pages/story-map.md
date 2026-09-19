@@ -12,7 +12,7 @@
 
 1. **项目侧栏**：展示全部项目、当前项目和新建项目入口；窄屏时收起为抽屉。
 2. **页面头部**：展示当前项目名称、新增角色按钮和项目操作菜单。
-3. **故事地图**：左侧固定显示四个层级标签，右侧按树状关系横向展开节点；每个有下一级的节点底部提供新增子节点按钮，每一组同级节点末尾提供快速新增按钮。
+3. **故事地图**：左侧固定显示四个层级标签，右侧按树状关系横向展开节点；每个有下一级的节点底部提供新增子节点按钮，悬停节点时在其右侧展开同级新增按钮。
 4. **节点编辑面板**：点击节点后从右侧打开，可修改名称或删除节点。
 5. **对话框**：负责项目与节点新增、项目重命名及删除确认。由某个节点或同级行发起新增时，父节点由当前上下文确定，不再要求重复选择。
 
@@ -22,9 +22,9 @@
 
 - 进入页面：加载项目列表，优先恢复上次查看的项目，否则打开第一个项目。
 - 新建项目：从侧栏、空状态或顶部入口打开新建弹窗，填写名称后创建并自动切换到新项目。
-- 新增角色：从头部、空状态或角色行末尾的加号打开弹窗。
+- 新增角色：从头部、空状态或任一角色节点右侧展开的同级加号打开弹窗。
 - 新增子节点：点击节点下方加号，直接以该节点为父节点创建下一层内容；弹窗只要求填写名称。
-- 新增同级节点：点击任一同级行末尾的加号，沿用该行所属父节点创建同层内容；角色行无需父节点。
+- 新增同级节点：悬停任一节点后，点击其右侧展开的加号，沿用该节点所属父节点，并紧跟当前节点插入同层内容；若右侧已有节点，新节点位于两者之间。键盘可直接聚焦该按钮，角色行无需父节点。
 - 编辑节点：点击节点打开编辑面板，支持保存新名称和删除当前节点及其后代。
 - 拖拽排序：拖动节点右上角手柄；指针进入可接收节点时显示吸附反馈，在间隙中则吸附到最近节点。可在同层排序，也可拖到合法的同层节点或上级节点以调整归属；拖拽期间节点与分支保持原始尺寸，只改变位置。连接线在变换期间暂时收起，落位后按最新父子关系重新显示，且只连接相邻同级节点中心。
 - 项目管理：项目菜单支持重命名和删除；删除操作均需二次确认。
@@ -39,7 +39,7 @@
 | 新建项目 | `POST /api/projects` | JSON：`name` | 新项目的 `id`、`name`、`nodes` | `frontend/src/App.tsx` 的 `createItem` | `backend/internal/app/router.go` | 已接入 |
 | 重命名项目 | `PATCH /api/projects/:projectID` | JSON：`name` | `id`、`name` | `frontend/src/App.tsx` 的 `renameProject` | `backend/internal/app/router.go` | 已接入 |
 | 删除项目 | `DELETE /api/projects/:projectID` | 路径参数 `projectID` | 无，成功状态为 204 | `frontend/src/App.tsx` 的 `deleteProject` | `backend/internal/app/router.go` | 已接入 |
-| 从节点或同级行快速新增节点 | `POST /api/projects/:projectID/nodes` | JSON：`name`、`kind`、`parentId` | `id`、`kind`、`parentId`、`name` | `frontend/src/App.tsx` 的 `createItem` | `backend/internal/app/router.go` | 已接入 |
+| 从节点快速新增节点 | `POST /api/projects/:projectID/nodes` | JSON：`name`、`kind`、`parentId`；同级插入时附 `afterId` | `id`、`kind`、`parentId`、`name` | `frontend/src/App.tsx` 的 `createItem` | `backend/internal/app/router.go` | 已接入 |
 | 重命名节点 | `PATCH /api/projects/:projectID/nodes/:nodeID` | JSON：`name` | 更新后的节点字段 | `frontend/src/App.tsx` 的 `renameNode` | `backend/internal/app/router.go` | 已接入 |
 | 删除节点及其后代 | `DELETE /api/projects/:projectID/nodes/:nodeID` | 路径参数 `projectID`、`nodeID` | 无，成功状态为 204 | `frontend/src/App.tsx` 的 `deleteNode` | `backend/internal/app/router.go` | 已接入 |
 | 拖拽排序或调整父节点 | `PUT /api/projects/:projectID/nodes/order` | JSON：`nodeId`、`parentId`、`nodeIds` | 无，成功状态为 204 | `frontend/src/App.tsx` 的 `reorderNodes` | `backend/internal/app/router.go` | 已接入 |
@@ -56,7 +56,7 @@
 | 空项目状态 | “暂无项目”“新建项目以开始规划。” | 没有项目 | 新建项目 |
 | 空角色状态 | “暂无角色”“先创建角色，再逐层添加史诗和用户故事。” | 当前项目没有角色 | 新建第一个角色 |
 | 节点下方按钮 | “新增子节点”辅助标签 | 节点支持下一层 | 创建下一层内容 |
-| 同级行末尾按钮 | “新增角色/史诗/用户故事/二级故事”辅助标签 | 正常地图中对应行可见 | 创建同层内容 |
+| 节点右侧同级按钮 | “新增同级角色/史诗/用户故事/二级故事”辅助标签 | 鼠标悬停节点、键盘聚焦按钮或使用触控设备 | 创建同层内容 |
 | 删除确认 | “确认删除？”及受影响内容说明 | 用户请求删除 | 取消或确认删除 |
 | 错误提示 | 面向用户的失败原因 | 请求失败 | 修正输入或稍后重试 |
 
@@ -72,7 +72,7 @@
 
 ### 正常状态
 
-展示四层故事地图。节点可选择、编辑、删除、拖拽；节点下方和同级行末尾均可快速新增。
+展示四层故事地图。节点可选择、编辑、删除、拖拽；节点下方可新增子节点，悬停节点后可从右侧新增同级节点。
 
 ### 校验失败
 
@@ -94,7 +94,7 @@
 
 - 窄屏：项目侧栏改为抽屉，故事地图保持固定节点尺寸并双向滚动，触控设备始终显示节点新增按钮。
 - 中等屏幕：侧栏可收起，地图按内容宽度横向展开。
-- 宽屏：侧栏常驻，地图内容区占据剩余空间，同级行末尾的快捷按钮随内容自然延伸。
+- 宽屏：侧栏常驻，地图内容区占据剩余空间；同级快捷按钮默认隐藏，悬停节点或键盘聚焦按钮时从节点右侧展开。
 
 ## 可访问性
 
@@ -107,13 +107,15 @@
 ## 依赖与假设
 
 - 依赖：React、Base UI、dnd-kit、现有 UI 组件及同源后端接口。
-- 假设：“每一行右侧”指每组同父节点、同类型节点的末尾；行末新增沿用该组父节点。
+- 假设：同级新增沿用当前节点的父节点，并将新节点插入到当前节点之后。
 - 待确认事项：无。
 
 ## 变更记录
 
 | 日期 | 变更 | 关联页面文件 |
 | --- | --- | --- |
+| 2026-09-19 | 同级加号创建的新节点改为紧跟当前节点插入；右侧已有节点时置于两者之间。 | `frontend/src/App.tsx`、`backend/internal/app/router.go`、`backend/internal/app/store.go` |
+| 2026-09-19 | 将常驻的同级行末新增按钮改为节点悬停时从右侧展开，并保留键盘与触控可访问性。 | `frontend/src/App.tsx`、`frontend/src/App.css` |
 | 2026-09-19 | 修复宽子树和拖拽过渡产生的多余分支线条，连接线与可拖拽视觉层分离。 | `frontend/src/App.tsx`、`frontend/src/App.css` |
 | 2026-09-19 | 修复不同尺寸分支拖拽时被 dnd-kit 缩放的问题，拖拽视觉仅保留平移。 | `frontend/src/App.tsx`、`frontend/src/sortable-transform.ts` |
 | 2026-09-19 | 建立页面文档；定义节点直接新增子节点、同级行末快捷新增和拖拽吸附行为。 | `frontend/src/App.tsx`、`frontend/src/App.css` |

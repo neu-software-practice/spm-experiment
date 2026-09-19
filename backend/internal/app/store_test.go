@@ -129,6 +129,46 @@ func TestStoreReordersOnlySiblingsAndPersists(t *testing.T) {
 	}
 }
 
+func TestStoreCreatesNodeAfterSiblingAndPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spm.json")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _ := store.CreateProject("中间插入")
+	role, _ := store.CreateNode(project.ID, KindRole, "", "用户")
+	otherRole, _ := store.CreateNode(project.ID, KindRole, "", "管理员")
+	first, _ := store.CreateNode(project.ID, KindEpic, role.ID, "第一个")
+	second, _ := store.CreateNode(project.ID, KindEpic, role.ID, "第二个")
+	other, _ := store.CreateNode(project.ID, KindEpic, otherRole.ID, "其他分组")
+
+	created, err := store.CreateNodeAfter(project.ID, KindEpic, role.ID, first.ID, "插入项")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateNodeAfter(project.ID, KindEpic, role.ID, other.ID, "错误锚点"); !errors.Is(err, ErrInvalidOrder) {
+		t.Fatalf("got %v, want ErrInvalidOrder", err)
+	}
+
+	reopened, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := reopened.Project(project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var siblingIDs []string
+	for _, node := range loaded.Nodes {
+		if node.Kind == KindEpic && node.ParentID == role.ID {
+			siblingIDs = append(siblingIDs, node.ID)
+		}
+	}
+	if len(siblingIDs) != 3 || siblingIDs[0] != first.ID || siblingIDs[1] != created.ID || siblingIDs[2] != second.ID {
+		t.Fatalf("unexpected sibling order: %v", siblingIDs)
+	}
+}
+
 func TestStoreMovesNodeAcrossParents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spm.json")
 	store, err := OpenStore(path)

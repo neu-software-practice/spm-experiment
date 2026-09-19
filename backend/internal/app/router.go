@@ -15,6 +15,7 @@ type nodeRequest struct {
 	Name     string   `json:"name"`
 	Kind     NodeKind `json:"kind"`
 	ParentID string   `json:"parentId"`
+	AfterID  string   `json:"afterId"`
 }
 
 type nodeOrderRequest struct {
@@ -80,7 +81,9 @@ func NewRouter(store *Store) *gin.Engine {
 			respondInvalidJSON(c)
 			return
 		}
-		node, err := store.CreateNode(c.Param("projectID"), request.Kind, request.ParentID, request.Name)
+		node, err := store.CreateNodeAfter(
+			c.Param("projectID"), request.Kind, request.ParentID, request.AfterID, request.Name,
+		)
 		if err != nil {
 			respondError(c, err)
 			return

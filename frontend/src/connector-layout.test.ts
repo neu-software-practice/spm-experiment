@@ -52,7 +52,7 @@ test('a transition without a transform keeps stable connectors visible', () => {
 test('horizontal connectors stop at the final node instead of the row add control', () => {
   assert.doesNotMatch(connectorStyles, /\.branch-children::before/)
   const horizontalRule = cssRuleStartingWith(
-    '.branch-children > .map-branch:not(:has(+ .row-add-slot))::after',
+    '.branch-children > .map-branch:not(:last-child)::after',
   )
   assert.match(horizontalRule.declarations, /left:\s*4rem;/)
   assert.match(horizontalRule.declarations, /width:\s*calc\(100% \+ 1rem\);/)

@@ -99,10 +99,15 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { isConnectorTransforming } from '@/connector-visibility'
+import {
+  isActiveCardCenterWithinInitialRect,
+  isEligibleNodeDropTarget,
+  parentKinds,
+  type NodeKind,
+} from '@/drag-collision'
+import { insertAfter } from '@/node-order'
 import { sortableTransformToString } from '@/sortable-transform'
 import './App.css'
-
-type NodeKind = 'role' | 'epic' | 'story' | 'substory'
 
 type StoryNode = {
   id: string
@@ -120,6 +125,7 @@ type Project = {
 type CreateTarget = {
   kind: NodeKind | 'project'
   parentId?: string
+  afterId?: string
 }
 
 type DeleteTarget =
@@ -141,18 +147,24 @@ const nodePrompts: Record<NodeKind | 'project', string> = {
   substory: '例如：添加封面图片',
 }
 
-const parentKinds: Partial<Record<NodeKind, NodeKind>> = {
-  epic: 'role',
-  story: 'epic',
-  substory: 'story',
-}
-
 const snapToNodeCollision: CollisionDetection = (args) => {
+  const activeContainer = args.droppableContainers.find(
+    (container) => container.id === args.active.id,
+  )
+  const activeCard = activeContainer?.node.current?.querySelector<HTMLElement>(
+    ':scope > .branch-visual > .node-slot',
+  )
+  if (activeCard && isActiveCardCenterWithinInitialRect(
+    activeCard.getBoundingClientRect(),
+    args.collisionRect,
+    args.active.rect.current.initial,
+  )) {
+    return []
+  }
   const activeKind = args.active.data.current?.kind as NodeKind | undefined
-  const parentKind = activeKind ? parentKinds[activeKind] : undefined
   const droppableContainers = args.droppableContainers.filter((container) => {
     const kind = container.data.current?.kind as NodeKind | undefined
-    return !activeKind || kind === activeKind || kind === parentKind
+    return isEligibleNodeDropTarget(args.active.id, activeKind, container.id, kind)
   })
   const droppableRects = new Map(args.droppableRects)
 
@@ -208,12 +220,14 @@ function NodeCard({
   selected,
   onSelect,
   onAdd,
+  onAddSibling,
   dragHandle,
 }: {
   node: StoryNode
   selected: boolean
   onSelect: (node: StoryNode) => void
   onAdd?: () => void
+  onAddSibling: () => void
   dragHandle?: ReactNode
 }) {
   return (
@@ -252,6 +266,20 @@ function NodeCard({
           <Plus />
         </Button>
       )}
+      <Button
+        type="button"
+        variant="outline"
+        size="icon-xs"
+        className="sibling-add-action"
+        onClick={(event) => {
+          event.stopPropagation()
+          onAddSibling()
+        }}
+        aria-label={`在${node.name}后新增${nodeLabels[node.kind]}`}
+        title={`新增同级${nodeLabels[node.kind]}`}
+      >
+        <Plus />
+      </Button>
       {dragHandle}
     </div>
   )
@@ -263,6 +291,7 @@ function SortableBranch({
   sorting,
   onSelect,
   onAdd,
+  onAddSibling,
   children,
 }: {
   node: StoryNode
@@ -270,6 +299,7 @@ function SortableBranch({
   sorting: boolean
   onSelect: (node: StoryNode) => void
   onAdd?: () => void
+  onAddSibling: () => void
   children?: ReactNode
 }) {
   const {
@@ -302,6 +332,7 @@ function SortableBranch({
           selected={selected}
           onSelect={onSelect}
           onAdd={onAdd}
+          onAddSibling={onAddSibling}
           dragHandle={
             <Button
               ref={setActivatorNodeRef}
@@ -326,24 +357,6 @@ function SortableBranch({
   )
 }
 
-function RowAddButton({ kind, onAdd }: { kind: NodeKind; onAdd: () => void }) {
-  return (
-    <div className="row-add-slot">
-      <Button
-        type="button"
-        variant="outline"
-        size="icon"
-        className="row-add-action"
-        onClick={onAdd}
-        aria-label={`新增${nodeLabels[kind]}`}
-        title={`新增${nodeLabels[kind]}`}
-      >
-        <Plus />
-      </Button>
-    </div>
-  )
-}
-
 type BranchProps = {
   nodes: StoryNode[]
   selectedId?: string
@@ -361,6 +374,7 @@ function StoryBranch({ story, ...props }: BranchProps & { story: StoryNode }) {
       sorting={props.sorting}
       onSelect={props.onSelect}
       onAdd={() => props.onCreate({ kind: 'substory', parentId: story.id })}
+      onAddSibling={() => props.onCreate({ kind: 'story', parentId: story.parentId, afterId: story.id })}
     >
       {substories.length > 0 && (
         <SortableContext items={substories.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
@@ -372,12 +386,9 @@ function StoryBranch({ story, ...props }: BranchProps & { story: StoryNode }) {
                 selected={props.selectedId === node.id}
                 sorting={props.sorting}
                 onSelect={props.onSelect}
+                onAddSibling={() => props.onCreate({ kind: 'substory', parentId: story.id, afterId: node.id })}
               />
             ))}
-            <RowAddButton
-              kind="substory"
-              onAdd={() => props.onCreate({ kind: 'substory', parentId: story.id })}
-            />
           </div>
         </SortableContext>
       )}
@@ -394,15 +405,12 @@ function EpicBranch({ epic, ...props }: BranchProps & { epic: StoryNode }) {
       sorting={props.sorting}
       onSelect={props.onSelect}
       onAdd={() => props.onCreate({ kind: 'story', parentId: epic.id })}
+      onAddSibling={() => props.onCreate({ kind: 'epic', parentId: epic.parentId, afterId: epic.id })}
     >
       {stories.length > 0 && (
         <SortableContext items={stories.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
           <div className="branch-children">
             {stories.map((story) => <StoryBranch key={story.id} story={story} {...props} />)}
-            <RowAddButton
-              kind="story"
-              onAdd={() => props.onCreate({ kind: 'story', parentId: epic.id })}
-            />
           </div>
         </SortableContext>
       )}
@@ -419,15 +427,12 @@ function RoleBranch({ role, ...props }: BranchProps & { role: StoryNode }) {
       sorting={props.sorting}
       onSelect={props.onSelect}
       onAdd={() => props.onCreate({ kind: 'epic', parentId: role.id })}
+      onAddSibling={() => props.onCreate({ kind: 'role', afterId: role.id })}
     >
       {epics.length > 0 && (
         <SortableContext items={epics.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
           <div className="branch-children">
             {epics.map((epic) => <EpicBranch key={epic.id} epic={epic} {...props} />)}
-            <RowAddButton
-              kind="epic"
-              onAdd={() => props.onCreate({ kind: 'epic', parentId: role.id })}
-            />
           </div>
         </SortableContext>
       )}
@@ -763,7 +768,10 @@ function App() {
           method: 'POST',
           body: JSON.stringify({ ...createTarget, parentId, name }),
         })
-        setProject({ ...project, nodes: [...project.nodes, created] })
+        setProject({
+          ...project,
+          nodes: insertAfter(project.nodes, created, createTarget.afterId),
+        })
         setSelectedId(created.id)
       }
       setCreateTarget(undefined)
@@ -988,7 +996,6 @@ function App() {
                         onCreate={setCreateTarget}
                       />
                     ))}
-                    <RowAddButton kind="role" onAdd={() => setCreateTarget({ kind: 'role' })} />
                   </div>
                 </SortableContext>
               </DndContext>
@@ -1009,7 +1016,7 @@ function App() {
         )}
 
         <CreateDialog
-          key={createTarget ? `${createTarget.kind}-${createTarget.parentId ?? ''}` : 'closed'}
+          key={createTarget ? `${createTarget.kind}-${createTarget.parentId ?? ''}-${createTarget.afterId ?? ''}` : 'closed'}
           target={createTarget}
           parents={createParents}
           busy={busy}
