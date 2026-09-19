@@ -13,13 +13,15 @@ import {
 } from 'lucide-react'
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
-  closestCenter,
+  closestCorners,
   DndContext,
   KeyboardSensor,
+  pointerWithin,
   PointerSensor,
   TouchSensor,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
 } from '@dnd-kit/core'
 import {
@@ -144,6 +146,25 @@ const parentKinds: Partial<Record<NodeKind, NodeKind>> = {
   substory: 'story',
 }
 
+const snapToNodeCollision: CollisionDetection = (args) => {
+  const activeKind = args.active.data.current?.kind as NodeKind | undefined
+  const parentKind = activeKind ? parentKinds[activeKind] : undefined
+  const droppableContainers = args.droppableContainers.filter((container) => {
+    const kind = container.data.current?.kind as NodeKind | undefined
+    return !activeKind || kind === activeKind || kind === parentKind
+  })
+  const droppableRects = new Map(args.droppableRects)
+
+  for (const container of droppableContainers) {
+    const node = container.node.current?.querySelector<HTMLElement>(':scope > .node-slot')
+    if (node) droppableRects.set(container.id, node.getBoundingClientRect())
+  }
+
+  const collisionArgs = { ...args, droppableContainers, droppableRects }
+  const directHits = pointerWithin(collisionArgs)
+  return directHits.length > 0 ? directHits : closestCorners(collisionArgs)
+}
+
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...options,
@@ -256,7 +277,8 @@ function SortableBranch({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: node.id, disabled: sorting })
+    isOver,
+  } = useSortable({ id: node.id, disabled: sorting, data: { kind: node.kind } })
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -265,7 +287,11 @@ function SortableBranch({
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="map-branch">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`map-branch${isDragging ? ' is-dragging' : ''}${isOver && !isDragging ? ' is-drop-target' : ''}`}
+    >
       <NodeCard
         node={node}
         selected={selected}
@@ -289,6 +315,24 @@ function SortableBranch({
         }
       />
       {children}
+    </div>
+  )
+}
+
+function RowAddButton({ kind, onAdd }: { kind: NodeKind; onAdd: () => void }) {
+  return (
+    <div className="row-add-slot">
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="row-add-action"
+        onClick={onAdd}
+        aria-label={`新增${nodeLabels[kind]}`}
+        title={`新增${nodeLabels[kind]}`}
+      >
+        <Plus />
+      </Button>
     </div>
   )
 }
@@ -323,6 +367,10 @@ function StoryBranch({ story, ...props }: BranchProps & { story: StoryNode }) {
                 onSelect={props.onSelect}
               />
             ))}
+            <RowAddButton
+              kind="substory"
+              onAdd={() => props.onCreate({ kind: 'substory', parentId: story.id })}
+            />
           </div>
         </SortableContext>
       )}
@@ -344,6 +392,10 @@ function EpicBranch({ epic, ...props }: BranchProps & { epic: StoryNode }) {
         <SortableContext items={stories.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
           <div className="branch-children">
             {stories.map((story) => <StoryBranch key={story.id} story={story} {...props} />)}
+            <RowAddButton
+              kind="story"
+              onAdd={() => props.onCreate({ kind: 'story', parentId: epic.id })}
+            />
           </div>
         </SortableContext>
       )}
@@ -365,6 +417,10 @@ function RoleBranch({ role, ...props }: BranchProps & { role: StoryNode }) {
         <SortableContext items={epics.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
           <div className="branch-children">
             {epics.map((epic) => <EpicBranch key={epic.id} epic={epic} {...props} />)}
+            <RowAddButton
+              kind="epic"
+              onAdd={() => props.onCreate({ kind: 'epic', parentId: role.id })}
+            />
           </div>
         </SortableContext>
       )}
@@ -459,6 +515,10 @@ function CreateDialog({
   if (!target) return null
   const label = target.kind === 'project' ? '项目' : nodeLabels[target.kind]
   const needsParent = target.kind !== 'project' && target.kind !== 'role'
+  const chooseParent = needsParent && !target.parentId
+  const presetParent = target.parentId
+    ? parents.find((parent) => parent.id === target.parentId)
+    : undefined
   const parentLabel = target.kind === 'epic'
     ? '所属角色'
     : target.kind === 'story'
@@ -474,11 +534,15 @@ function CreateDialog({
           <DialogHeader>
             <DialogTitle>新增{label}</DialogTitle>
             <DialogDescription>
-              {needsParent ? `选择父节点并创建${label}。` : `创建一个新的${label}。`}
+              {target.parentId
+                ? `将在「${presetParent?.name ?? '当前节点'}」下创建${label}。`
+                : needsParent
+                  ? `选择父节点并创建${label}。`
+                  : `创建一个新的${label}。`}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            {needsParent && (
+            {chooseParent && (
               <div className="grid gap-2">
                 <Label htmlFor="create-parent">{parentLabel}</Label>
                 <Select value={parentId} onValueChange={(value) => setParentId(value ?? '')}>
@@ -498,7 +562,7 @@ function CreateDialog({
               <Label htmlFor="create-name">名称</Label>
               <Input
                 id="create-name"
-                autoFocus={!needsParent}
+                autoFocus={!chooseParent}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder={nodePrompts[target.kind]}
@@ -631,8 +695,8 @@ function App() {
   const [sorting, setSorting] = useState(false)
   const [error, setError] = useState<string>()
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 5 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
@@ -901,7 +965,7 @@ function App() {
               </div>
               <DndContext
                 sensors={sensors}
-                collisionDetection={closestCenter}
+                collisionDetection={snapToNodeCollision}
                 onDragEnd={(event) => void reorderNodes(event)}
               >
                 <SortableContext items={nodesByKind.role.map((node) => node.id)} strategy={horizontalListSortingStrategy}>
@@ -917,6 +981,7 @@ function App() {
                         onCreate={setCreateTarget}
                       />
                     ))}
+                    <RowAddButton kind="role" onAdd={() => setCreateTarget({ kind: 'role' })} />
                   </div>
                 </SortableContext>
               </DndContext>
