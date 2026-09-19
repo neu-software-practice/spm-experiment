@@ -98,6 +98,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { isConnectorTransforming } from '@/connector-visibility'
 import { sortableTransformToString } from '@/sortable-transform'
 import './App.css'
 
@@ -287,7 +288,7 @@ function SortableBranch({
     zIndex: isDragging ? 20 : undefined,
     opacity: isDragging ? 0.7 : undefined,
   }
-  const isTransforming = Boolean(transform || transition)
+  const isTransforming = isConnectorTransforming({ transform, transition })
   const hasChildren = Boolean(children)
 
   return (

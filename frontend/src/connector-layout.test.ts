@@ -25,7 +25,10 @@ function cssRuleStartingWith(selector: string) {
 test('sortable transforms are isolated from the branch connector layer', () => {
   assert.match(appSource, /ref=\{setNodeRef\}[\s\S]*?className=\{`map-branch/)
   assert.match(appSource, /className="branch-visual"\s+style=\{style\}/)
-  assert.match(appSource, /const isTransforming = Boolean\(transform \|\| transition\)/)
+  assert.match(
+    appSource,
+    /const isTransforming = isConnectorTransforming\(\{ transform, transition \}\)/,
+  )
   assert.match(
     appSource,
     /className=\{`map-branch\$\{isTransforming \? ' is-transforming' : ''\}\$\{isDragging/,
@@ -39,6 +42,11 @@ test('sortable transforms are isolated from the branch connector layer', () => {
     /\{hasChildren && <span className="branch-outgoing-connector" aria-hidden="true" \/>\}/,
   )
   assert.match(appSource, /:scope > \.branch-visual > \.node-slot/)
+})
+
+test('a transition without a transform keeps stable connectors visible', () => {
+  assert.match(appSource, /isConnectorTransforming\(\{ transform, transition \}\)/)
+  assert.doesNotMatch(appSource, /Boolean\(transform \|\| transition\)/)
 })
 
 test('horizontal connectors stop at the final node instead of the row add control', () => {
