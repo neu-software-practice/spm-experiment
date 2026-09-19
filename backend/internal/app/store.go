@@ -151,6 +151,10 @@ func (s *Store) DeleteProject(id string) error {
 }
 
 func (s *Store) CreateNode(projectID string, kind NodeKind, parentID, name string) (Node, error) {
+	return s.CreateNodeAfter(projectID, kind, parentID, "", name)
+}
+
+func (s *Store) CreateNodeAfter(projectID string, kind NodeKind, parentID, afterID, name string) (Node, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Node{}, ErrInvalidName
@@ -168,9 +172,24 @@ func (s *Store) CreateNode(projectID string, kind NodeKind, parentID, name strin
 	}
 
 	node := Node{ID: newID(), Kind: kind, ParentID: parentID, Name: name}
-	project.Nodes = append(project.Nodes, node)
+	previous := append([]Node(nil), project.Nodes...)
+	if afterID == "" {
+		project.Nodes = append(project.Nodes, node)
+	} else {
+		anchorIndex := nodeIndex(project.Nodes, afterID)
+		if anchorIndex < 0 {
+			return Node{}, ErrInvalidOrder
+		}
+		anchor := project.Nodes[anchorIndex]
+		if anchor.Kind != kind || anchor.ParentID != parentID {
+			return Node{}, ErrInvalidOrder
+		}
+		project.Nodes = append(project.Nodes, Node{})
+		copy(project.Nodes[anchorIndex+2:], project.Nodes[anchorIndex+1:])
+		project.Nodes[anchorIndex+1] = node
+	}
 	if err := s.saveLocked(); err != nil {
-		project.Nodes = project.Nodes[:len(project.Nodes)-1]
+		project.Nodes = previous
 		return Node{}, err
 	}
 	return node, nil
