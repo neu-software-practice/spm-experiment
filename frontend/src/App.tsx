@@ -303,20 +303,19 @@ function SortableBranch({
           onAdd={onAdd}
           onAddSibling={onAddSibling}
           dragHandle={
-            <Tooltip content="拖拽排序" relationship="label">
-              <Button
-                ref={setActivatorNodeRef}
-                type="button"
-                appearance="subtle"
-                size="small"
-                icon={<ArrowMove20Regular />}
-                className="node-drag-action"
-                onClick={(event) => event.stopPropagation()}
-                aria-label={`拖拽${node.name}排序`}
-                {...attributes}
-                {...listeners}
-              />
-            </Tooltip>
+            <Button
+              ref={setActivatorNodeRef}
+              type="button"
+              appearance="subtle"
+              size="small"
+              icon={<ArrowMove20Regular />}
+              className="node-drag-action"
+              onClick={(event) => event.stopPropagation()}
+              aria-label={`拖拽${node.name}排序`}
+              title="拖拽排序"
+              {...attributes}
+              {...listeners}
+            />
           }
         />
         {children}
