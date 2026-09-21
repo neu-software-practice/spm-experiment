@@ -157,15 +157,26 @@
   background: var(--map-connector);
 }
 
-.branch-children:has(> .map-branch.is-transforming) > .map-branch::before,
-.branch-children:has(> .map-branch.is-transforming) > .map-branch::after,
-.map-branch:has(> .branch-visual > .branch-children > .map-branch.is-transforming) > .branch-outgoing-connector,
 .map-branch.is-transforming::before,
+.map-branch.is-drop-target::before,
+.map-branch.is-transforming > .branch-outgoing-connector,
+.map-branch.is-drop-target > .branch-outgoing-connector {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--map-connector) 0 3px,
+    transparent 3px 6px
+  );
+}
+
 .map-branch.is-transforming::after,
-.map-branch.is-transforming .map-branch::before,
-.map-branch.is-transforming .map-branch::after,
-.map-branch.is-transforming .branch-outgoing-connector {
-  opacity: 0;
+.map-branch.is-drop-target::after,
+.map-branch:has(+ .map-branch.is-transforming)::after,
+.map-branch:has(+ .map-branch.is-drop-target)::after {
+  background: repeating-linear-gradient(
+    to right,
+    var(--map-connector) 0 3px,
+    transparent 3px 6px
+  );
 }
 
 @media (max-width: 767px) {

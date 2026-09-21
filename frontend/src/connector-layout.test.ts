@@ -59,22 +59,57 @@ test('horizontal connectors stop at the final node instead of the row add contro
   assert.match(horizontalRule.declarations, /height:\s*1px;/)
 })
 
-test('connectors inside a transforming subtree are suppressed until it is stable', () => {
-  const hiddenRule = cssRuleStartingWith(
-    '.branch-children:has(> .map-branch.is-transforming) > .map-branch::before',
+test('only connector segments touching a moving branch or drop target become dashed', () => {
+  const verticalAffectedRule = cssRuleStartingWith(
+    '.map-branch.is-transforming::before',
   )
-  const requiredSelectors = [
+  const requiredVerticalSelectors = [
+    '.map-branch.is-transforming::before',
+    '.map-branch.is-drop-target::before',
+    '.map-branch.is-transforming > .branch-outgoing-connector',
+    '.map-branch.is-drop-target > .branch-outgoing-connector',
+  ]
+  for (const selector of requiredVerticalSelectors) {
+    assert.ok(
+      verticalAffectedRule.selectors.includes(selector),
+      `missing affected vertical connector selector: ${selector}`,
+    )
+  }
+  assert.match(verticalAffectedRule.declarations, /repeating-linear-gradient\(/)
+  assert.match(verticalAffectedRule.declarations, /to bottom/)
+  assert.doesNotMatch(verticalAffectedRule.declarations, /opacity:\s*0/)
+
+  const horizontalAffectedRule = cssRuleStartingWith(
+    '.map-branch.is-transforming::after',
+  )
+  const requiredHorizontalSelectors = [
+    '.map-branch.is-transforming::after',
+    '.map-branch.is-drop-target::after',
+    '.map-branch:has(+ .map-branch.is-transforming)::after',
+    '.map-branch:has(+ .map-branch.is-drop-target)::after',
+  ]
+  for (const selector of requiredHorizontalSelectors) {
+    assert.ok(
+      horizontalAffectedRule.selectors.includes(selector),
+      `missing affected horizontal connector selector: ${selector}`,
+    )
+  }
+  assert.match(horizontalAffectedRule.declarations, /repeating-linear-gradient\(/)
+  assert.match(horizontalAffectedRule.declarations, /to right/)
+  assert.doesNotMatch(horizontalAffectedRule.declarations, /opacity:\s*0/)
+
+  const overlyBroadSelectors = [
     '.branch-children:has(> .map-branch.is-transforming) > .map-branch::before',
     '.branch-children:has(> .map-branch.is-transforming) > .map-branch::after',
-    '.map-branch:has(> .branch-visual > .branch-children > .map-branch.is-transforming) > .branch-outgoing-connector',
-    '.map-branch.is-transforming::before',
-    '.map-branch.is-transforming::after',
     '.map-branch.is-transforming .map-branch::before',
     '.map-branch.is-transforming .map-branch::after',
     '.map-branch.is-transforming .branch-outgoing-connector',
   ]
-  for (const selector of requiredSelectors) {
-    assert.ok(hiddenRule.selectors.includes(selector), `missing hidden connector selector: ${selector}`)
+  for (const selector of overlyBroadSelectors) {
+    assert.ok(
+      !verticalAffectedRule.selectors.includes(selector)
+        && !horizontalAffectedRule.selectors.includes(selector),
+      `unaffected connector is marked by: ${selector}`,
+    )
   }
-  assert.match(hiddenRule.declarations, /^\s*opacity:\s*0;\s*$/)
 })
