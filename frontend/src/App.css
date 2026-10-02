@@ -1,8 +1,12 @@
-.fluent-root {
+/* Fluent copies the provider className onto portal mount nodes; keep layout styles off them. */
+.fluent-root:not([data-portal-node]) {
   min-width: 320px;
   min-height: 100vh;
-  color: #1b1b1b;
   background: #f3f3f3;
+}
+
+.fluent-root {
+  color: #1b1b1b;
 }
 
 .app-shell {
@@ -58,6 +62,11 @@
 .sidebar-close,
 .nav-toggle {
   display: none !important;
+}
+
+/* Fluent's Divider grows by default; override its same-specificity atomic class. */
+.project-sidebar > .sidebar-divider {
+  flex: none;
 }
 
 .sidebar-section-heading {

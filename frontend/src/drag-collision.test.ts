@@ -7,6 +7,7 @@ import {
   horizontalCenterDistance,
   isActiveCardCenterWithinInitialHorizontalRange,
   isEligibleNodeDropTarget,
+  isTargetInDragDirection,
   type NodeKind,
 } from './drag-collision.ts'
 
@@ -109,5 +110,36 @@ test('the collision detector applies the eligibility guard before measuring targ
   assert.match(
     appSource,
     /isEligibleNodeDropTarget\(args\.active\.id, activeKind, container\.id, kind\)/,
+  )
+})
+
+test('same-level targets behind the drag direction are ignored', () => {
+  // B starts at 785..913; A (previous sibling with a wide subtree) is far left,
+  // C (child of the next role) is directly right. Dragging B 100px left must not target C.
+  const initialBranchRect = { top: 245, right: 913, bottom: 532, left: 785 }
+  const movedCard = { top: 245, right: 813, bottom: 372, left: 685 }
+  const movedBranch = { top: 245, right: 813, bottom: 532, left: 685 }
+  const previousSibling = { top: 245, right: 481, bottom: 372, left: 353 }
+  const nextParentChild = { top: 245, right: 1057, bottom: 372, left: 929 }
+
+  assert.equal(isTargetInDragDirection(movedCard, movedBranch, initialBranchRect, previousSibling), true)
+  assert.equal(isTargetInDragDirection(movedCard, movedBranch, initialBranchRect, nextParentChild), false)
+})
+
+test('dragging right only targets nodes to the right of the starting position', () => {
+  const initialBranchRect = { top: 0, right: 228, bottom: 128, left: 100 }
+  const movedCard = { top: 0, right: 328, bottom: 128, left: 200 }
+  const left = { top: 0, right: 84, bottom: 128, left: -44 }
+  const right = { top: 0, right: 372, bottom: 128, left: 244 }
+
+  assert.equal(isTargetInDragDirection(movedCard, movedCard, initialBranchRect, left), false)
+  assert.equal(isTargetInDragDirection(movedCard, movedCard, initialBranchRect, right), true)
+  assert.equal(isTargetInDragDirection(movedCard, movedCard, null, left), true)
+})
+
+test('the collision detector filters same-level targets by drag direction', () => {
+  assert.match(
+    appSource,
+    /isTargetInDragDirection\([\s\S]*?activeCardRect,[\s\S]*?args\.collisionRect,[\s\S]*?args\.active\.rect\.current\.initial,[\s\S]*?rect,?[\s\S]*?\)/,
   )
 })

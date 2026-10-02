@@ -26,6 +26,20 @@ export function isActiveCardCenterWithinInitialHorizontalRange(
   return centerX >= initialLeft && centerX <= initialRight
 }
 
+export function isTargetInDragDirection(
+  currentCardRect: Rect,
+  currentBranchRect: Rect,
+  initialBranchRect: Rect | null,
+  targetRect: Rect,
+) {
+  if (!initialBranchRect) return true
+  const deltaX = currentBranchRect.left - initialBranchRect.left
+  if (deltaX === 0) return true
+  const initialCenterX = (currentCardRect.left + currentCardRect.right) / 2 - deltaX
+  const targetCenterX = (targetRect.left + targetRect.right) / 2
+  return deltaX < 0 ? targetCenterX < initialCenterX : targetCenterX > initialCenterX
+}
+
 export function horizontalCenterDistance(first: Rect, second: Rect) {
   const firstCenterX = (first.left + first.right) / 2
   const secondCenterX = (second.left + second.right) / 2
