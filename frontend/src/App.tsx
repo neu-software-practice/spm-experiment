@@ -33,7 +33,6 @@ import {
   SkeletonItem,
   Spinner,
   Text,
-  Tooltip,
   webLightTheme,
 } from '@fluentui/react-components'
 import {
@@ -70,7 +69,8 @@ import {
 } from '@dnd-kit/sortable'
 import { isConnectorTransforming } from '@/connector-visibility'
 import {
-  isActiveCardCenterWithinInitialRect,
+  horizontalCenterDistance,
+  isActiveCardCenterWithinInitialHorizontalRange,
   isEligibleNodeDropTarget,
   parentKinds,
   type NodeKind,
@@ -124,13 +124,7 @@ const snapToNodeCollision: CollisionDetection = (args) => {
   const activeCard = activeContainer?.node.current?.querySelector<HTMLElement>(
     ':scope > .branch-visual > .node-slot',
   )
-  if (activeCard && isActiveCardCenterWithinInitialRect(
-    activeCard.getBoundingClientRect(),
-    args.collisionRect,
-    args.active.rect.current.initial,
-  )) {
-    return []
-  }
+  const activeCardRect = activeCard?.getBoundingClientRect()
   const activeKind = args.active.data.current?.kind as NodeKind | undefined
   const droppableContainers = args.droppableContainers.filter((container) => {
     const kind = container.data.current?.kind as NodeKind | undefined
@@ -146,8 +140,45 @@ const snapToNodeCollision: CollisionDetection = (args) => {
   }
 
   const collisionArgs = { ...args, droppableContainers, droppableRects }
-  const directHits = pointerWithin(collisionArgs)
-  return directHits.length > 0 ? directHits : closestCorners(collisionArgs)
+  const parentKind = activeKind ? parentKinds[activeKind] : undefined
+  const parentContainers = parentKind
+    ? droppableContainers.filter((container) => container.data.current?.kind === parentKind)
+    : []
+  const directParentHits = pointerWithin({
+    ...collisionArgs,
+    droppableContainers: parentContainers,
+  })
+  if (directParentHits.length > 0) return directParentHits
+
+  if (activeCardRect && isActiveCardCenterWithinInitialHorizontalRange(
+    activeCardRect,
+    args.collisionRect,
+    args.active.rect.current.initial,
+  )) {
+    return []
+  }
+
+  const sameKindContainers = droppableContainers.filter(
+    (container) => container.data.current?.kind === activeKind,
+  )
+  if (activeCardRect && sameKindContainers.length > 0) {
+    return sameKindContainers
+      .flatMap((droppableContainer) => {
+        const rect = droppableRects.get(droppableContainer.id)
+        return rect
+          ? [{
+              id: droppableContainer.id,
+              data: {
+                droppableContainer,
+                value: horizontalCenterDistance(activeCardRect, rect),
+              },
+            }]
+          : []
+      })
+      .sort((first, second) => first.data.value - second.data.value)
+  }
+
+  return closestCorners(collisionArgs)
 }
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -220,35 +251,33 @@ function NodeCard({
         <Badge appearance="tint" color="informative" size="small">{nodeLabels[node.kind]}</Badge>
       </Card>
       {onAdd && (
-        <Tooltip content="新增子节点" relationship="label">
-          <Button
-            type="button"
-            appearance="subtle"
-            size="small"
-            icon={<Add20Regular />}
-            className="node-add-action"
-            onClick={(event) => {
-              event.stopPropagation()
-              onAdd()
-            }}
-            aria-label={`在${node.name}下新增${node.kind === 'role' ? '史诗' : node.kind === 'epic' ? '用户故事' : '二级故事'}`}
-          />
-        </Tooltip>
-      )}
-      <Tooltip content={`新增同级${nodeLabels[node.kind]}`} relationship="label">
         <Button
           type="button"
-          appearance="secondary"
+          appearance="subtle"
           size="small"
           icon={<Add20Regular />}
-          className="sibling-add-action"
+          className="node-add-action"
           onClick={(event) => {
             event.stopPropagation()
-            onAddSibling()
+            onAdd()
           }}
-          aria-label={`在${node.name}后新增${nodeLabels[node.kind]}`}
+          aria-label={`在${node.name}下新增${node.kind === 'role' ? '史诗' : node.kind === 'epic' ? '用户故事' : '二级故事'}`}
+          title="新增子节点"
         />
-      </Tooltip>
+      )}
+      <Button
+        type="button"
+        appearance="secondary"
+        size="small"
+        icon={<Add20Regular />}
+        className="sibling-add-action"
+        onClick={(event) => {
+          event.stopPropagation()
+          onAddSibling()
+        }}
+        aria-label={`在${node.name}后新增${nodeLabels[node.kind]}`}
+        title={`新增同级${nodeLabels[node.kind]}`}
+      />
       {dragHandle}
     </div>
   )
@@ -439,15 +468,21 @@ function ProjectSidebar({
             icon={<Dismiss20Regular />}
             className="sidebar-close"
             aria-label="关闭项目导航"
+            title="关闭项目导航"
             onClick={onClose}
           />
         </div>
         <Divider />
         <div className="sidebar-section-heading">
           <Text size={200} weight="semibold">项目</Text>
-          <Tooltip content="新建项目" relationship="label">
-            <Button appearance="subtle" size="small" icon={<Add20Regular />} aria-label="新建项目" onClick={onCreate} />
-          </Tooltip>
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={<Add20Regular />}
+            aria-label="新建项目"
+            title="新建项目"
+            onClick={onCreate}
+          />
         </div>
         <nav className="project-list" aria-label="项目列表">
           {projects.map((item) => (
@@ -619,7 +654,7 @@ function NodeSheet({
     <OverlayDrawer position="end" open onOpenChange={(_event, data) => !data.open && onClose()}>
         <DrawerHeader>
           <DrawerHeaderTitle action={
-            <Button appearance="subtle" icon={<Dismiss20Regular />} aria-label="关闭编辑面板" onClick={onClose} />
+            <Button appearance="subtle" icon={<Dismiss20Regular />} aria-label="关闭编辑面板" title="关闭编辑面板" onClick={onClose} />
           }>
             编辑{nodeLabels[node.kind]}
           </DrawerHeaderTitle>
@@ -892,15 +927,14 @@ function App() {
         />
         <main className="workspace">
           <header className="command-bar">
-            <Tooltip content="打开项目导航" relationship="label">
-              <Button
-                appearance="subtle"
-                icon={<Navigation20Regular />}
-                className="nav-toggle"
-                aria-label="打开项目导航"
-                onClick={() => setSidebarOpen(true)}
-              />
-            </Tooltip>
+            <Button
+              appearance="subtle"
+              icon={<Navigation20Regular />}
+              className="nav-toggle"
+              aria-label="打开项目导航"
+              title="打开项目导航"
+              onClick={() => setSidebarOpen(true)}
+            />
             <Divider vertical className="command-divider" />
             <div className="command-title">
               <Text as="h1" weight="semibold">{project?.name ?? '用户故事地图'}</Text>
@@ -913,7 +947,7 @@ function App() {
                 </Button>
                 <Menu>
                   <MenuTrigger disableButtonEnhancement>
-                    <Button appearance="subtle" icon={<MoreHorizontal20Regular />} aria-label="项目操作" />
+                    <Button appearance="subtle" icon={<MoreHorizontal20Regular />} aria-label="项目操作" title="项目操作" />
                   </MenuTrigger>
                   <MenuPopover>
                     <MenuList>
