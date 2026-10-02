@@ -55,6 +55,7 @@ import {
   pointerWithin,
   PointerSensor,
   TouchSensor,
+  useDndMonitor,
   useSensor,
   useSensors,
   type CollisionDetection,
@@ -67,16 +68,18 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from '@dnd-kit/sortable'
+import type { Transform } from '@dnd-kit/utilities'
 import { isConnectorTransforming } from '@/connector-visibility'
 import {
   horizontalCenterDistance,
   isActiveCardCenterWithinInitialHorizontalRange,
   isEligibleNodeDropTarget,
+  isTargetInDragDirection,
   parentKinds,
   type NodeKind,
 } from '@/drag-collision'
 import { insertAfter } from '@/node-order'
-import { sortableTransformToString } from '@/sortable-transform'
+import { resolveDragSourceTransform, sortableTransformToString } from '@/sortable-transform'
 import './App.css'
 
 type StoryNode = {
@@ -165,7 +168,12 @@ const snapToNodeCollision: CollisionDetection = (args) => {
     return sameKindContainers
       .flatMap((droppableContainer) => {
         const rect = droppableRects.get(droppableContainer.id)
-        return rect
+        return rect && isTargetInDragDirection(
+          activeCardRect,
+          args.collisionRect,
+          args.active.rect.current.initial,
+          rect,
+        )
           ? [{
               id: droppableContainer.id,
               data: {
@@ -305,11 +313,21 @@ function SortableBranch({
     listeners,
     setNodeRef,
     setActivatorNodeRef,
-    transform,
+    transform: sortableTransform,
     transition,
     isDragging,
     isOver,
   } = useSortable({ id: node.id, disabled: sorting, data: { kind: node.kind } })
+  const [dragDelta, setDragDelta] = useState<Transform | null>(null)
+  useDndMonitor({
+    onDragMove: ({ active, delta }) => {
+      if (active.id === node.id) setDragDelta({ ...delta, scaleX: 1, scaleY: 1 })
+    },
+    onDragEnd: () => setDragDelta(null),
+    onDragCancel: () => setDragDelta(null),
+  })
+  // dnd-kit drops the drag source transform while hovering another parent's children.
+  const transform = resolveDragSourceTransform(isDragging, sortableTransform, dragDelta)
   const style: CSSProperties = {
     transform: sortableTransformToString(transform),
     transition,
@@ -472,7 +490,7 @@ function ProjectSidebar({
             onClick={onClose}
           />
         </div>
-        <Divider />
+        <Divider className="sidebar-divider" />
         <div className="sidebar-section-heading">
           <Text size={200} weight="semibold">项目</Text>
           <Button
