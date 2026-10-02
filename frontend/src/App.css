@@ -24,9 +24,9 @@
   min-width: 0;
   flex-direction: column;
   border-right: 1px solid #dedede;
-  background: rgba(249, 249, 249, 0.94);
+  /* Opaque: on narrow screens the sidebar slides over the map, which would show through. */
+  background: #f9f9f9;
   box-shadow: 1px 0 0 rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(24px) saturate(140%);
 }
 
 .sidebar-brand {
@@ -440,9 +440,13 @@
   box-shadow: 0 0 0 2px #c7e0f4, 0 6px 16px rgba(0, 0, 0, 0.08);
 }
 
-.story-node-title {
+/* Fluent Text injects display/overflow atomic classes; the child selector outranks them. */
+.story-node > .story-node-title {
   display: -webkit-box;
+  box-sizing: border-box;
   max-width: 100%;
+  /* Keep text clear of the drag handle in the top-right corner. */
+  padding-right: 22px;
   overflow: hidden;
   line-height: 20px;
   overflow-wrap: anywhere;
@@ -450,10 +454,11 @@
   -webkit-line-clamp: 3;
 }
 
+/* Straddles the card's bottom edge on the outgoing connector, clear of the kind badge. */
 .node-add-action {
   position: absolute !important;
   z-index: 10;
-  bottom: 6px;
+  bottom: -14px;
   left: 50%;
   min-width: 28px !important;
   width: 28px;
