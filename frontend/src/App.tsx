@@ -261,7 +261,7 @@ function NodeCard({
       {onAdd && (
         <Button
           type="button"
-          appearance="subtle"
+          appearance="secondary"
           size="small"
           icon={<Add20Regular />}
           className="node-add-action"

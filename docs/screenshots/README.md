@@ -32,7 +32,7 @@
 | `02-empty-project.png` | 空项目（暂无角色） |
 | `03-create-role-dialog.png` | 新增角色对话框 |
 | `04-story-map.png` | 完整四层故事地图 |
-| `05-node-hover-sibling-add.png` | 悬停节点显示同级新增按钮 |
+| `05-node-hover-sibling-add.png` | 悬停节点显示同级新增按钮与底边子节点新增按钮（含长标题换行） |
 | `06-node-edit-drawer.png` | 节点编辑抽屉 |
 | `07-node-delete-confirm.png` | 删除确认 |
 | `08-project-menu.png` | 项目操作菜单 |
@@ -40,8 +40,8 @@
 | `10-dragging-node.png` | 拖拽中（受影响连线为虚线） |
 | `11-error-message.png` | 请求失败提示 |
 | `12-loading-skeleton.png` | 加载骨架屏 |
-| `13-mobile-story-map.png` | 移动端故事地图 |
-| `14-mobile-sidebar.png` | 移动端项目导航 |
+| `13-mobile-story-map.png` | 移动端故事地图（新增按钮不遮挡徽标） |
+| `14-mobile-sidebar.png` | 移动端项目导航（不透明背景） |
 | `15-no-projects.png` | 无项目空状态 |
 | `16-drag-past-wide-branch.png` | 修复后：拖动越过宽分支时卡片跟随指针，目标为左侧同级 |
 
@@ -59,3 +59,11 @@
    - 修复：给它加上 `.project-sidebar > .sidebar-divider { flex: none; }`。这里需要更高的选择器优先级，才能覆盖 Fluent 后注入的原子类。
 
 验证：前端单元测试 27/27、build、lint（3 条既有警告）、后端 `go test ./...`、`git diff --check` 均通过；Chromium 端到端走查 17/17 通过；7 种树形下的真实拖拽场景结果全部符合预期，包括有意的跨父节点拖拽。
+
+## 界面细节修复（第二轮）
+
+4. **移动端侧栏透出背后的地图**：侧栏背景为 94% 不透明度加 `backdrop-filter` 模糊，窄屏滑出时地图内容透过侧栏可见。改为不透明的 `#f9f9f9`。
+5. **长标题压住拖拽图标**：标题宽度占满卡片，与右上角拖拽手柄重叠。标题右侧预留 22px；同时发现 `-webkit-line-clamp: 3` 一直被 Fluent `Text` 的原子类（`display: block`、`overflow: visible`）覆盖，超长标题会溢出到徽标上，改用 `.story-node > .story-node-title` 提高优先级。
+6. **新增子节点按钮遮挡类型徽标**：按钮原在卡片内部底部居中，触控设备上常驻显示，压住“用户故事”等徽标。移到卡片底边中央（跨在出线连接处），改为带底色的 secondary 样式。
+
+验证：前端单元测试 30/30（新增 3 个回归测试）、build、lint（3 条既有警告）、`git diff --check` 通过；Chromium 桌面与移动端截图复核，并实际点击底边“新增子节点”按钮确认可用。
