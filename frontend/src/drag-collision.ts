@@ -13,24 +13,23 @@ type Rect = {
   left: number
 }
 
-export function isActiveCardCenterWithinInitialRect(
+export function isActiveCardCenterWithinInitialHorizontalRange(
   currentCardRect: Rect,
   currentBranchRect: Rect,
   initialBranchRect: Rect | null,
 ) {
   if (!initialBranchRect) return false
   const deltaX = currentBranchRect.left - initialBranchRect.left
-  const deltaY = currentBranchRect.top - initialBranchRect.top
-  const initialCardRect = {
-    top: currentCardRect.top - deltaY,
-    right: currentCardRect.right - deltaX,
-    bottom: currentCardRect.bottom - deltaY,
-    left: currentCardRect.left - deltaX,
-  }
+  const initialLeft = currentCardRect.left - deltaX
+  const initialRight = currentCardRect.right - deltaX
   const centerX = (currentCardRect.left + currentCardRect.right) / 2
-  const centerY = (currentCardRect.top + currentCardRect.bottom) / 2
-  return centerX >= initialCardRect.left && centerX <= initialCardRect.right
-    && centerY >= initialCardRect.top && centerY <= initialCardRect.bottom
+  return centerX >= initialLeft && centerX <= initialRight
+}
+
+export function horizontalCenterDistance(first: Rect, second: Rect) {
+  const firstCenterX = (first.left + first.right) / 2
+  const secondCenterX = (second.left + second.right) / 2
+  return Math.abs(firstCenterX - secondCenterX)
 }
 
 export function isEligibleNodeDropTarget(

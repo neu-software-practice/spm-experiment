@@ -1,17 +1,53 @@
-import {
-  AlertCircle,
-  Check,
-  Folder,
-  FolderKanban,
-  GripVertical,
-  LoaderCircle,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  Save,
-  Trash2,
-} from 'lucide-react'
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react'
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Divider,
+  DrawerBody,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerHeaderTitle,
+  Dropdown,
+  Field,
+  FluentProvider,
+  Input,
+  Menu,
+  MenuDivider,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
+  MessageBar,
+  MessageBarBody,
+  MessageBarTitle,
+  Option,
+  OverlayDrawer,
+  Skeleton,
+  SkeletonItem,
+  Spinner,
+  Text,
+  webLightTheme,
+} from '@fluentui/react-components'
+import {
+  Add20Regular,
+  ArrowMove20Regular,
+  Board20Regular,
+  CheckmarkCircle16Regular,
+  Delete20Regular,
+  Dismiss20Regular,
+  Edit20Regular,
+  Folder20Regular,
+  MoreHorizontal20Regular,
+  Navigation20Regular,
+  Save20Regular,
+} from '@fluentui/react-icons'
 import {
   closestCorners,
   DndContext,
@@ -31,76 +67,10 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from '@dnd-kit/sortable'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupAction,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarRail,
-  SidebarTrigger,
-  useSidebar,
-} from '@/components/ui/sidebar'
-import { Skeleton } from '@/components/ui/skeleton'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { isConnectorTransforming } from '@/connector-visibility'
 import {
-  isActiveCardCenterWithinInitialRect,
+  horizontalCenterDistance,
+  isActiveCardCenterWithinInitialHorizontalRange,
   isEligibleNodeDropTarget,
   parentKinds,
   type NodeKind,
@@ -154,13 +124,7 @@ const snapToNodeCollision: CollisionDetection = (args) => {
   const activeCard = activeContainer?.node.current?.querySelector<HTMLElement>(
     ':scope > .branch-visual > .node-slot',
   )
-  if (activeCard && isActiveCardCenterWithinInitialRect(
-    activeCard.getBoundingClientRect(),
-    args.collisionRect,
-    args.active.rect.current.initial,
-  )) {
-    return []
-  }
+  const activeCardRect = activeCard?.getBoundingClientRect()
   const activeKind = args.active.data.current?.kind as NodeKind | undefined
   const droppableContainers = args.droppableContainers.filter((container) => {
     const kind = container.data.current?.kind as NodeKind | undefined
@@ -176,8 +140,45 @@ const snapToNodeCollision: CollisionDetection = (args) => {
   }
 
   const collisionArgs = { ...args, droppableContainers, droppableRects }
-  const directHits = pointerWithin(collisionArgs)
-  return directHits.length > 0 ? directHits : closestCorners(collisionArgs)
+  const parentKind = activeKind ? parentKinds[activeKind] : undefined
+  const parentContainers = parentKind
+    ? droppableContainers.filter((container) => container.data.current?.kind === parentKind)
+    : []
+  const directParentHits = pointerWithin({
+    ...collisionArgs,
+    droppableContainers: parentContainers,
+  })
+  if (directParentHits.length > 0) return directParentHits
+
+  if (activeCardRect && isActiveCardCenterWithinInitialHorizontalRange(
+    activeCardRect,
+    args.collisionRect,
+    args.active.rect.current.initial,
+  )) {
+    return []
+  }
+
+  const sameKindContainers = droppableContainers.filter(
+    (container) => container.data.current?.kind === activeKind,
+  )
+  if (activeCardRect && sameKindContainers.length > 0) {
+    return sameKindContainers
+      .flatMap((droppableContainer) => {
+        const rect = droppableRects.get(droppableContainer.id)
+        return rect
+          ? [{
+              id: droppableContainer.id,
+              data: {
+                droppableContainer,
+                value: horizontalCenterDistance(activeCardRect, rect),
+              },
+            }]
+          : []
+      })
+      .sort((first, second) => first.data.value - second.data.value)
+  }
+
+  return closestCorners(collisionArgs)
 }
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -233,11 +234,11 @@ function NodeCard({
   return (
     <div className="node-slot group/node">
       <Card
-        size="sm"
+        data-kind={node.kind}
         role="button"
         tabIndex={0}
         aria-pressed={selected}
-        className={`story-node size-32 cursor-pointer justify-between bg-card transition-colors hover:bg-accent${selected ? ' ring-2 ring-ring' : ''}`}
+        className={`story-node${selected ? ' is-selected' : ''}`}
         onClick={() => onSelect(node)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -246,30 +247,29 @@ function NodeCard({
           }
         }}
       >
-        <CardHeader className="h-full content-center pb-10">
-          <CardTitle className="line-clamp-3">{node.name}</CardTitle>
-        </CardHeader>
+        <Text weight="semibold" className="story-node-title">{node.name}</Text>
+        <Badge appearance="tint" color="informative" size="small">{nodeLabels[node.kind]}</Badge>
       </Card>
       {onAdd && (
         <Button
           type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="node-add-action absolute bottom-2 left-1/2 z-10 -ml-3.5"
+          appearance="subtle"
+          size="small"
+          icon={<Add20Regular />}
+          className="node-add-action"
           onClick={(event) => {
             event.stopPropagation()
             onAdd()
           }}
           aria-label={`在${node.name}下新增${node.kind === 'role' ? '史诗' : node.kind === 'epic' ? '用户故事' : '二级故事'}`}
           title="新增子节点"
-        >
-          <Plus />
-        </Button>
+        />
       )}
       <Button
         type="button"
-        variant="outline"
-        size="icon-xs"
+        appearance="secondary"
+        size="small"
+        icon={<Add20Regular />}
         className="sibling-add-action"
         onClick={(event) => {
           event.stopPropagation()
@@ -277,9 +277,7 @@ function NodeCard({
         }}
         aria-label={`在${node.name}后新增${nodeLabels[node.kind]}`}
         title={`新增同级${nodeLabels[node.kind]}`}
-      >
-        <Plus />
-      </Button>
+      />
       {dragHandle}
     </div>
   )
@@ -337,17 +335,16 @@ function SortableBranch({
             <Button
               ref={setActivatorNodeRef}
               type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="absolute top-2 right-2 z-10 cursor-grab touch-none text-muted-foreground active:cursor-grabbing"
+              appearance="subtle"
+              size="small"
+              icon={<ArrowMove20Regular />}
+              className="node-drag-action"
               onClick={(event) => event.stopPropagation()}
               aria-label={`拖拽${node.name}排序`}
               title="拖拽排序"
               {...attributes}
               {...listeners}
-            >
-              <GripVertical />
-            </Button>
+            />
           }
         />
         {children}
@@ -443,69 +440,75 @@ function RoleBranch({ role, ...props }: BranchProps & { role: StoryNode }) {
 function ProjectSidebar({
   projects,
   activeId,
+  open,
   onSelect,
   onCreate,
+  onClose,
 }: {
   projects: Project[]
   activeId?: string
+  open: boolean
   onSelect: (id: string) => void
   onCreate: () => void
+  onClose: () => void
 }) {
-  const { setOpenMobile } = useSidebar()
   return (
-    <Sidebar collapsible="offcanvas">
-      <SidebarHeader className="border-b">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" className="pointer-events-none">
-              <FolderKanban />
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">项目管理</span>
-                <span className="truncate text-xs text-muted-foreground">用户故事地图</span>
-              </div>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>项目</SidebarGroupLabel>
-          <SidebarGroupAction onClick={onCreate} aria-label="新建项目" title="新建项目">
-            <Plus />
-          </SidebarGroupAction>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {projects.map((project) => (
-                <SidebarMenuItem key={project.id}>
-                  <SidebarMenuButton
-                    isActive={project.id === activeId}
-                    tooltip={project.name}
-                    onClick={() => {
-                      onSelect(project.id)
-                      setOpenMobile(false)
-                    }}
-                  >
-                    <Folder />
-                    <span>{project.name}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-      <SidebarFooter className="border-t">
-        <Button variant="outline" className="w-full justify-start" onClick={onCreate}>
-          <Plus />
-          新建项目
-        </Button>
-        <div className="flex items-center gap-2 px-2 text-xs text-muted-foreground">
-          <Check className="size-3.5" />
-          自动保存
+    <>
+      <button className={`sidebar-scrim${open ? ' is-open' : ''}`} aria-label="关闭项目导航" onClick={onClose} />
+      <aside className={`project-sidebar${open ? ' is-open' : ''}`} aria-label="项目导航">
+        <div className="sidebar-brand">
+          <span className="brand-mark"><Board20Regular /></span>
+          <div>
+            <Text weight="semibold" block>项目管理</Text>
+            <Text size={200} className="sidebar-subtitle">用户故事地图</Text>
+          </div>
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={<Dismiss20Regular />}
+            className="sidebar-close"
+            aria-label="关闭项目导航"
+            title="关闭项目导航"
+            onClick={onClose}
+          />
         </div>
-      </SidebarFooter>
-      <SidebarRail />
-    </Sidebar>
+        <Divider />
+        <div className="sidebar-section-heading">
+          <Text size={200} weight="semibold">项目</Text>
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={<Add20Regular />}
+            aria-label="新建项目"
+            title="新建项目"
+            onClick={onCreate}
+          />
+        </div>
+        <nav className="project-list" aria-label="项目列表">
+          {projects.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`project-nav-item${item.id === activeId ? ' is-active' : ''}`}
+              aria-current={item.id === activeId ? 'page' : undefined}
+              onClick={() => {
+                onSelect(item.id)
+                onClose()
+              }}
+            >
+              <Folder20Regular />
+              <span>{item.name}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <Button appearance="secondary" icon={<Add20Regular />} className="sidebar-create" onClick={onCreate}>
+            新建项目
+          </Button>
+          <div className="autosave-status"><CheckmarkCircle16Regular />自动保存</div>
+        </div>
+      </aside>
+    </>
   )
 }
 
@@ -537,60 +540,55 @@ function CreateDialog({
       ? '所属史诗'
       : '所属用户故事'
   return (
-    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
-      <DialogContent>
-        <form onSubmit={(event) => {
+    <Dialog open onOpenChange={(_event, data) => !data.open && !busy && onClose()}>
+      <DialogSurface>
+        <form className="dialog-form" onSubmit={(event) => {
           event.preventDefault()
           if (name.trim() && (!needsParent || parentId)) onSubmit(name.trim(), parentId || undefined)
         }}>
-          <DialogHeader>
+          <DialogBody>
             <DialogTitle>新增{label}</DialogTitle>
-            <DialogDescription>
+            <DialogContent className="dialog-content">
+              <Text className="dialog-description">
               {target.parentId
                 ? `将在「${presetParent?.name ?? '当前节点'}」下创建${label}。`
                 : needsParent
                   ? `选择父节点并创建${label}。`
                   : `创建一个新的${label}。`}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
+              </Text>
             {chooseParent && (
-              <div className="grid gap-2">
-                <Label htmlFor="create-parent">{parentLabel}</Label>
-                <Select value={parentId} onValueChange={(value) => setParentId(value ?? '')}>
-                  <SelectTrigger id="create-parent" className="w-full">
-                    <SelectValue placeholder="选择父节点">
-                      {parents.find((parent) => parent.id === parentId)?.name}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {parents.map((parent) => <SelectItem key={parent.id} value={parent.id}>{parent.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {parents.length === 0 && <p className="text-sm text-muted-foreground">请先创建上一层节点。</p>}
-              </div>
+              <Field label={parentLabel} hint={parents.length === 0 ? '请先创建上一层节点。' : undefined}>
+                <Dropdown
+                  id="create-parent"
+                  placeholder="选择父节点"
+                  value={parents.find((parent) => parent.id === parentId)?.name ?? ''}
+                  selectedOptions={parentId ? [parentId] : []}
+                  onOptionSelect={(_event, data) => setParentId(data.optionValue ?? '')}
+                >
+                  {parents.map((parent) => <Option key={parent.id} value={parent.id}>{parent.name}</Option>)}
+                </Dropdown>
+              </Field>
             )}
-            <div className="grid gap-2">
-              <Label htmlFor="create-name">名称</Label>
+            <Field label="名称">
               <Input
                 id="create-name"
                 autoFocus={!chooseParent}
                 value={name}
-                onChange={(event) => setName(event.target.value)}
+                onChange={(_event, data) => setName(data.value)}
                 placeholder={nodePrompts[target.kind]}
                 maxLength={80}
               />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
-            <Button type="submit" disabled={!name.trim() || busy || (needsParent && !parentId)}>
-              {busy ? <LoaderCircle className="animate-spin" /> : <Plus />}
+            </Field>
+            </DialogContent>
+          <DialogActions>
+            <Button type="button" appearance="secondary" onClick={onClose} disabled={busy}>取消</Button>
+            <Button type="submit" appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Add20Regular />} disabled={!name.trim() || busy || (needsParent && !parentId)}>
               创建
             </Button>
-          </DialogFooter>
+          </DialogActions>
+          </DialogBody>
         </form>
-      </DialogContent>
+      </DialogSurface>
     </Dialog>
   )
 }
@@ -608,29 +606,29 @@ function RenameProjectDialog({
 }) {
   const [name, setName] = useState(project.name)
   return (
-    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
-      <DialogContent>
-        <form onSubmit={(event) => {
+    <Dialog open onOpenChange={(_event, data) => !data.open && !busy && onClose()}>
+      <DialogSurface>
+        <form className="dialog-form" onSubmit={(event) => {
           event.preventDefault()
           if (name.trim()) onSubmit(name.trim())
         }}>
-          <DialogHeader>
+          <DialogBody>
             <DialogTitle>重命名项目</DialogTitle>
-            <DialogDescription>修改当前项目的名称。</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-2 py-4">
-            <Label htmlFor="project-name">名称</Label>
-            <Input id="project-name" autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={80} />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
-            <Button type="submit" disabled={!name.trim() || name.trim() === project.name || busy}>
-              {busy ? <LoaderCircle className="animate-spin" /> : <Save />}
+            <DialogContent className="dialog-content">
+              <Text className="dialog-description">修改当前项目的名称。</Text>
+              <Field label="名称">
+                <Input id="project-name" autoFocus value={name} onChange={(_event, data) => setName(data.value)} maxLength={80} />
+              </Field>
+            </DialogContent>
+          <DialogActions>
+            <Button type="button" appearance="secondary" onClick={onClose} disabled={busy}>取消</Button>
+            <Button type="submit" appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Save20Regular />} disabled={!name.trim() || name.trim() === project.name || busy}>
               保存
             </Button>
-          </DialogFooter>
+          </DialogActions>
+          </DialogBody>
         </form>
-      </DialogContent>
+      </DialogSurface>
     </Dialog>
   )
 }
@@ -653,45 +651,44 @@ function NodeSheet({
   const [name, setName] = useState(node.name)
   const dirty = name.trim() !== node.name
   return (
-    <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent>
-        <SheetHeader>
-          <SheetTitle>{nodeLabels[node.kind]}</SheetTitle>
-          <SheetDescription>编辑节点名称。</SheetDescription>
-        </SheetHeader>
-        <div className="grid gap-5 px-4">
-          <Badge variant="secondary">{nodeLabels[node.kind]}</Badge>
-          <div className="grid gap-2">
-            <Label htmlFor="node-name">名称</Label>
+    <OverlayDrawer position="end" open onOpenChange={(_event, data) => !data.open && onClose()}>
+        <DrawerHeader>
+          <DrawerHeaderTitle action={
+            <Button appearance="subtle" icon={<Dismiss20Regular />} aria-label="关闭编辑面板" title="关闭编辑面板" onClick={onClose} />
+          }>
+            编辑{nodeLabels[node.kind]}
+          </DrawerHeaderTitle>
+        </DrawerHeader>
+        <DrawerBody className="node-drawer-body">
+          <Text className="dialog-description">修改节点名称及查看所属关系。</Text>
+          <Badge appearance="tint" color="informative">{nodeLabels[node.kind]}</Badge>
+          <Field label="名称">
             <Input
               id="node-name"
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(_event, data) => setName(data.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && dirty && name.trim()) onSave(name.trim())
               }}
               maxLength={80}
             />
-          </div>
+          </Field>
           {parent && (
-            <div className="grid gap-1 text-sm">
-              <span className="text-muted-foreground">归属</span>
-              <span>{parent.name}</span>
+            <div className="node-parent-info">
+              <Text size={200} className="muted-text">归属</Text>
+              <Text>{parent.name}</Text>
             </div>
           )}
-        </div>
-        <SheetFooter>
-          <Button onClick={() => onSave(name.trim())} disabled={!dirty || !name.trim() || busy}>
-            {busy ? <LoaderCircle className="animate-spin" /> : <Save />}
+        </DrawerBody>
+        <DrawerFooter className="node-drawer-footer">
+          <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Save20Regular />} onClick={() => onSave(name.trim())} disabled={!dirty || !name.trim() || busy}>
             保存名称
           </Button>
-          <Button variant="destructive" onClick={onDelete} disabled={busy}>
-            <Trash2 />
+          <Button appearance="secondary" icon={<Delete20Regular />} className="danger-button" onClick={onDelete} disabled={busy}>
             删除{nodeLabels[node.kind]}
           </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        </DrawerFooter>
+    </OverlayDrawer>
   )
 }
 
@@ -706,6 +703,7 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [sorting, setSorting] = useState(false)
   const [error, setError] = useState<string>()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
@@ -917,61 +915,75 @@ function App() {
   const createParents = createParentKind ? nodesByKind[createParentKind] : []
 
   return (
-    <TooltipProvider>
-      <SidebarProvider>
+    <FluentProvider theme={webLightTheme} className="fluent-root">
+      <div className="app-shell">
         <ProjectSidebar
           projects={projects}
           activeId={project?.id}
+          open={sidebarOpen}
           onSelect={(id) => id !== project?.id && void loadProject(id)}
           onCreate={() => setCreateTarget({ kind: 'project' })}
+          onClose={() => setSidebarOpen(false)}
         />
-        <SidebarInset className="h-svh min-w-0 overflow-hidden">
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-            <SidebarTrigger />
-            <Separator orientation="vertical" className="h-4" />
-            <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{project?.name ?? '用户故事地图'}</h1>
+        <main className="workspace">
+          <header className="command-bar">
+            <Button
+              appearance="subtle"
+              icon={<Navigation20Regular />}
+              className="nav-toggle"
+              aria-label="打开项目导航"
+              title="打开项目导航"
+              onClick={() => setSidebarOpen(true)}
+            />
+            <Divider vertical className="command-divider" />
+            <div className="command-title">
+              <Text as="h1" weight="semibold">{project?.name ?? '用户故事地图'}</Text>
+              {project && <Text size={200}>用户故事地图</Text>}
+            </div>
             {project && (
-              <>
-                <Button variant="ghost" size="icon" onClick={() => setCreateTarget({ kind: 'role' })} aria-label="新增角色" title="新增角色">
-                  <Plus />
+              <div className="command-actions">
+                <Button appearance="primary" icon={<Add20Regular />} onClick={() => setCreateTarget({ kind: 'role' })}>
+                  新增角色
                 </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger render={
-                    <Button variant="ghost" size="icon" aria-label="项目操作"><MoreHorizontal /></Button>
-                  } />
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => setRenameProjectOpen(true)}><Pencil />重命名项目</DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" onClick={() => setDeleteTarget({ type: 'project', name: project.name })}>
-                      <Trash2 />删除项目
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </>
+                <Menu>
+                  <MenuTrigger disableButtonEnhancement>
+                    <Button appearance="subtle" icon={<MoreHorizontal20Regular />} aria-label="项目操作" title="项目操作" />
+                  </MenuTrigger>
+                  <MenuPopover>
+                    <MenuList>
+                      <MenuItem icon={<Edit20Regular />} onClick={() => setRenameProjectOpen(true)}>重命名项目</MenuItem>
+                      <MenuDivider />
+                      <MenuItem icon={<Delete20Regular />} className="danger-menu-item" onClick={() => setDeleteTarget({ type: 'project', name: project.name })}>
+                        删除项目
+                      </MenuItem>
+                    </MenuList>
+                  </MenuPopover>
+                </Menu>
+              </div>
             )}
           </header>
 
           {loading ? (
-            <div className="grid flex-1 grid-cols-2 gap-4 p-6 sm:grid-cols-4">
-              {Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="size-32" />)}
-            </div>
+            <Skeleton className="loading-grid" aria-label="正在加载项目">
+              {Array.from({ length: 8 }, (_, index) => <SkeletonItem key={index} className="loading-card" />)}
+            </Skeleton>
           ) : !project ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-              <FolderKanban className="size-8 text-muted-foreground" />
-              <div><h2 className="font-medium">暂无项目</h2><p className="text-sm text-muted-foreground">新建项目以开始规划。</p></div>
-              <Button onClick={() => setCreateTarget({ kind: 'project' })}><Plus />新建项目</Button>
+            <div className="empty-state">
+              <span className="empty-icon"><Board20Regular /></span>
+              <div><h2>暂无项目</h2><p>新建项目以开始规划。</p></div>
+              <Button appearance="primary" icon={<Add20Regular />} onClick={() => setCreateTarget({ kind: 'project' })}>新建项目</Button>
             </div>
           ) : nodesByKind.role.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-              <FolderKanban className="size-8 text-muted-foreground" />
+            <div className="empty-state">
+              <span className="empty-icon"><Board20Regular /></span>
               <div>
-                <h2 className="font-medium">暂无角色</h2>
-                <p className="text-sm text-muted-foreground">先创建角色，再逐层添加史诗和用户故事。</p>
+                <h2>暂无角色</h2>
+                <p>先创建角色，再逐层添加史诗和用户故事。</p>
               </div>
-              <Button onClick={() => setCreateTarget({ kind: 'role' })}><Plus />新建第一个角色</Button>
+              <Button appearance="primary" icon={<Add20Regular />} onClick={() => setCreateTarget({ kind: 'role' })}>新建第一个角色</Button>
             </div>
           ) : (
-            <section className="story-map-scroll flex-1 overflow-auto" aria-label="用户故事地图">
+            <section className="story-map-scroll" aria-label="用户故事地图">
               <div className="level-labels" aria-hidden="true">
                 <span>角色</span>
                 <span>史诗</span>
@@ -1001,7 +1013,7 @@ function App() {
               </DndContext>
             </section>
           )}
-        </SidebarInset>
+        </main>
 
         {selectedNode && (
           <NodeSheet
@@ -1033,39 +1045,38 @@ function App() {
           />
         )}
 
-        <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && !busy && setDeleteTarget(undefined)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>确认删除？</AlertDialogTitle>
-              <AlertDialogDescription>
+        <Dialog open={Boolean(deleteTarget)} onOpenChange={(_event, data) => !data.open && !busy && setDeleteTarget(undefined)}>
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>确认删除？</DialogTitle>
+              <DialogContent>
                 {deleteTarget?.type === 'node'
                   ? `将删除「${deleteTarget.node.name}」及其下的所有内容。`
                   : `将永久删除项目「${deleteTarget?.name ?? ''}」。`}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={busy}>取消</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
+              </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" disabled={busy} onClick={() => setDeleteTarget(undefined)}>取消</Button>
+              <Button
+                appearance="primary"
+                className="danger-primary-button"
+                icon={busy ? <Spinner size="tiny" /> : <Delete20Regular />}
                 disabled={busy}
                 onClick={() => deleteTarget?.type === 'node' ? void deleteNode(deleteTarget.node) : void deleteProject()}
               >
-                {busy ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
                 删除
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+              </Button>
+            </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
 
         {error && (
-          <Alert variant="destructive" className="fixed right-4 bottom-4 z-[100] max-w-sm bg-background shadow-lg">
-            <AlertCircle />
-            <AlertTitle>操作失败</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+          <MessageBar intent="error" className="error-toast">
+            <MessageBarBody><MessageBarTitle>操作失败</MessageBarTitle>{error}</MessageBarBody>
+          </MessageBar>
         )}
-      </SidebarProvider>
-    </TooltipProvider>
+      </div>
+    </FluentProvider>
   )
 }
 

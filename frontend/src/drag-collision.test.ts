@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
-  isActiveCardCenterWithinInitialRect,
+  horizontalCenterDistance,
+  isActiveCardCenterWithinInitialHorizontalRange,
   isEligibleNodeDropTarget,
   type NodeKind,
 } from './drag-collision.ts'
@@ -23,42 +24,64 @@ test('an active sortable is never eligible as its own collision target', () => {
   }
 })
 
-test('a near-origin drag does not fall through to the nearest sibling', () => {
+test('a drag inside its initial horizontal range does not fall through to a sibling', () => {
   const initialBranchRect = { top: 100, right: 228, bottom: 548, left: 100 }
 
   assert.equal(
-    isActiveCardCenterWithinInitialRect(
-      { top: 104, right: 232, bottom: 232, left: 104 },
-      { top: 104, right: 232, bottom: 552, left: 104 },
+    isActiveCardCenterWithinInitialHorizontalRange(
+      { top: -300, right: 232, bottom: -172, left: 104 },
+      { top: -300, right: 232, bottom: 148, left: 104 },
       initialBranchRect,
     ),
     true,
   )
   assert.match(
     appSource,
-    /isActiveCardCenterWithinInitialRect\([\s\S]*?activeCard\.getBoundingClientRect\(\),[\s\S]*?args\.collisionRect,[\s\S]*?args\.active\.rect\.current\.initial/,
+    /isActiveCardCenterWithinInitialHorizontalRange\([\s\S]*?activeCardRect,[\s\S]*?args\.collisionRect,[\s\S]*?args\.active\.rect\.current\.initial/,
   )
 })
 
-test('a large branch can target its parent after the card leaves its initial position', () => {
+test('a card leaves its initial horizontal range only after moving sideways', () => {
   const initialBranchRect = { top: 160, right: 228, bottom: 608, left: 100 }
 
   assert.equal(
-    isActiveCardCenterWithinInitialRect(
-      { top: 0, right: 228, bottom: 128, left: 100 },
-      { top: 0, right: 228, bottom: 448, left: 100 },
+    isActiveCardCenterWithinInitialHorizontalRange(
+      { top: 0, right: 360, bottom: 128, left: 232 },
+      { top: 0, right: 360, bottom: 448, left: 232 },
       initialBranchRect,
     ),
     false,
   )
   assert.equal(
-    isActiveCardCenterWithinInitialRect(
+    isActiveCardCenterWithinInitialHorizontalRange(
       { top: 0, right: 228, bottom: 128, left: 100 },
       { top: 0, right: 228, bottom: 448, left: 100 },
       null,
     ),
     false,
   )
+})
+
+test('same-level target distance ignores vertical position', () => {
+  const active = { top: 500, right: 428, bottom: 628, left: 300 }
+  const nearXFarY = { top: -1000, right: 460, bottom: -872, left: 332 }
+  const farXSameY = { top: 500, right: 728, bottom: 628, left: 600 }
+
+  assert.equal(horizontalCenterDistance(active, nearXFarY), 32)
+  assert.equal(horizontalCenterDistance(active, farXSameY), 300)
+  assert.ok(
+    horizontalCenterDistance(active, nearXFarY)
+      < horizontalCenterDistance(active, farXSameY),
+  )
+  assert.match(appSource, /value: horizontalCenterDistance\(activeCardRect, rect\)/)
+})
+
+test('a directly hovered legal parent takes priority over horizontal sibling sorting', () => {
+  const parentHitIndex = appSource.indexOf('if (directParentHits.length > 0)')
+  const siblingSortIndex = appSource.indexOf('const sameKindContainers')
+
+  assert.ok(parentHitIndex >= 0)
+  assert.ok(siblingSortIndex > parentHitIndex)
 })
 
 test('upward parent targets and same-kind sorting targets remain eligible', () => {
