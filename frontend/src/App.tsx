@@ -240,7 +240,7 @@ function NodeCard({
   dragHandle?: ReactNode
 }) {
   return (
-    <div className="node-slot group/node">
+    <div className="node-slot">
       <Card
         data-kind={node.kind}
         role="button"

@@ -46,7 +46,9 @@
 
 ### 缺失接口与接入缺口
 
-无接口缺失或接入缺口。
+| 页面功能 | 后端接口 | 现状 |
+| --- | --- | --- |
+| AI 生成子节点 | `GET /api/ai/status`、`POST /api/projects/:projectID/nodes/:nodeID/generate-children` | 后端已实现并有文档，页面尚未提供入口，未接入。接口说明见后端接口文档的 [AI 状态](../backend-api.md#get-apiaistatus) 与 [AI 生成](../backend-api.md#ai-生成) 部分。 |
 
 ## 可见文案
 
@@ -115,6 +117,7 @@
 | 日期 | 变更 | 关联页面文件 |
 | --- | --- | --- |
 | 2026-10-02 | 侧栏改为不透明背景，修复窄屏滑出导航透出地图；节点标题为拖拽手柄预留右侧空间，并修复三行截断被 Fluent 样式覆盖而失效的问题；新增子节点按钮移到卡片底边中央，不再遮挡类型徽标。 | `frontend/src/App.tsx`、`frontend/src/App.css`、`frontend/src/layout-styles.test.ts` |
+| 2026-10-02 | 同级拖拽只在拖动方向一侧寻找目标，修复向左越过宽子树时误选右侧角色下节点；跨分组悬停时卡片继续跟随指针；对话框和抽屉打开时背后页面在半透明遮罩下可见；修复侧栏分隔线被拉伸。 | `frontend/src/App.tsx`、`frontend/src/App.css`、`frontend/src/drag-collision.ts`、`frontend/src/sortable-transform.ts`、`frontend/src/drag-collision.test.ts`、`frontend/src/sortable-transform.test.ts`、`frontend/src/layout-styles.test.ts` |
 | 2026-09-21 | 同级节点拖拽改为只按水平中心距离判定，忽略上下位置，并保留指针直接进入合法上级节点时的跨层调整，避免目标反复切换导致抽动。 | `frontend/src/App.tsx`、`frontend/src/drag-collision.ts`、`frontend/src/drag-collision.test.ts` |
 | 2026-09-21 | 修复节点加号悬停时页面闪烁；移除页面内剩余的浮层提示包装，并检查侧栏新建、移动端导航、关闭、项目菜单等纯图标按钮，统一保留直接按钮节点、辅助名称和原生提示。 | `frontend/src/App.tsx`、`frontend/src/drag-handle-hover.test.ts` |
 | 2026-09-21 | 修复拖拽手柄悬停时页面闪烁；激活器改为稳定的直接按钮并保留原生提示，避免悬浮门户反复挂载。 | `frontend/src/App.tsx`、`frontend/src/drag-handle-hover.test.ts` |
