@@ -1,19 +1,18 @@
 /// <reference types="node" />
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { appSource, styles } from './test-support.ts'
 
-const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
-const styles = readFileSync(new URL('./App.css', import.meta.url), 'utf8')
 
 test('same-level add control belongs to each node instead of a permanent row slot', () => {
   assert.doesNotMatch(appSource, /RowAddButton|row-add-slot|row-add-action/)
   assert.match(appSource, /className="sibling-add-action"/)
-  assert.match(appSource, /onAddSibling=\{\(\) => props\.onCreate\(\{ kind: 'role', afterId: role\.id \}\)\}/)
-  assert.match(appSource, /kind: 'epic', parentId: epic\.parentId, afterId: epic\.id/)
-  assert.match(appSource, /kind: 'story', parentId: story\.parentId, afterId: story\.id/)
-  assert.match(appSource, /kind: 'substory', parentId: story\.id, afterId: node\.id/)
+  // One recursive branch serves every level, so the sibling keeps the node's own kind and parent.
+  assert.match(
+    appSource,
+    /onAddSibling=\{\(\) => props\.onCreate\(\{ kind: node\.kind, parentId: node\.parentId, afterId: node\.id \}\)\}/,
+  )
   assert.match(appSource, /nodes: insertAfter\(project\.nodes, created, createTarget\.afterId\)/)
 })
 

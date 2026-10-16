@@ -9,6 +9,72 @@
   color: #1b1b1b;
 }
 
+/*
+ * Colour tokens. Each node kind owns an accent used by its card stripe, badge, icons and the
+ * add buttons that create it, so the four levels stay distinguishable at a glance.
+ */
+:root {
+  --brand-color: #0f6cbd;
+  --ai-color: #a33cb8;
+  --ai-gradient: linear-gradient(135deg, #5b3fc4, #a62fa8);
+  --folder-color: #c98a00;
+  --success-color: #107c10;
+}
+
+[data-kind='role'] {
+  --kind-color: #0f6cbd;
+  --kind-ink: #0e5a9d;
+  --kind-tint: #ebf3fc;
+  --kind-stroke: #b4d6fa;
+}
+
+[data-kind='epic'] {
+  --kind-color: #107c10;
+  --kind-ink: #0b6a0b;
+  --kind-tint: #f1faf1;
+  --kind-stroke: #9fd89f;
+}
+
+[data-kind='story'] {
+  --kind-color: #8764b8;
+  --kind-ink: #63458f;
+  --kind-tint: #f7f4fb;
+  --kind-stroke: #d7c9ea;
+}
+
+[data-kind='substory'] {
+  --kind-color: #ca5010;
+  --kind-ink: #a3410d;
+  --kind-tint: #fdf6f3;
+  --kind-stroke: #f4bfab;
+}
+
+.kind-icon {
+  flex: none;
+  color: var(--kind-color);
+}
+
+/* Fluent's tint badge sets its own palette through atomic classes; the attribute selector outranks them. */
+.kind-badge[data-kind] {
+  gap: 2px;
+  color: var(--kind-ink);
+  border-color: var(--kind-stroke);
+  background: var(--kind-tint);
+}
+
+.icon-add,
+.icon-edit {
+  color: var(--brand-color) !important;
+}
+
+.icon-add .fui-Button__icon {
+  color: var(--brand-color) !important;
+}
+
+.icon-ai {
+  color: var(--ai-color) !important;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
@@ -42,7 +108,7 @@
 .empty-icon {
   display: grid;
   place-items: center;
-  color: #0f6cbd;
+  color: var(--brand-color);
   background: #e5f1fb;
   border: 1px solid #c7e0f4;
 }
@@ -124,7 +190,11 @@
   width: 3px;
   content: '';
   border-radius: 2px;
-  background: #0f6cbd;
+  background: var(--brand-color);
+}
+
+.project-folder-icon {
+  color: var(--folder-color);
 }
 
 .project-nav-item span {
@@ -145,13 +215,33 @@
   justify-content: flex-start;
 }
 
-.autosave-status {
+.sidebar-status {
   display: flex;
   align-items: center;
-  gap: 7px;
+  justify-content: space-between;
+  gap: 8px;
   padding: 0 6px;
   color: #616161;
   font-size: 12px;
+}
+
+.autosave-status,
+.ai-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.autosave-status svg {
+  color: var(--success-color);
+}
+
+.ai-status svg {
+  color: #a0a0a0;
+}
+
+.ai-status.is-enabled svg {
+  color: var(--ai-color);
 }
 
 .sidebar-scrim {
@@ -231,6 +321,20 @@
   background: #a80000 !important;
 }
 
+.ai-primary-button:not(:disabled) {
+  color: #ffffff !important;
+  border-color: transparent !important;
+  background: var(--ai-gradient) !important;
+}
+
+.ai-primary-button:not(:disabled):hover {
+  filter: brightness(0.92);
+}
+
+.ai-secondary-button:not(:disabled) .fui-Button__icon {
+  color: var(--ai-color) !important;
+}
+
 .loading-grid {
   display: grid;
   flex: 1;
@@ -285,10 +389,28 @@
   padding-top: 4px;
 }
 
+.dialog-title-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.create-mode-tabs {
+  margin: -4px 0 -6px -10px;
+}
+
+.ai-note {
+  display: block;
+}
+
 .node-drawer-body {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.node-drawer-body > .kind-badge {
+  align-self: flex-start;
 }
 
 .node-drawer-footer {
@@ -305,7 +427,29 @@
   background: #fafafa;
 }
 
-.error-toast {
+.node-parent-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.node-ai-panel {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #ead7f0;
+  border-radius: 6px;
+  background: #fcf7fd;
+}
+
+.node-ai-panel-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notice-toast {
   position: fixed;
   z-index: 1000;
   right: 20px;
@@ -348,13 +492,31 @@
   backdrop-filter: blur(16px);
 }
 
-.level-labels span {
+.level-label {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #616161;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--kind-ink);
   font-size: 12px;
   font-weight: 600;
+}
+
+.level-label::before {
+  position: absolute;
+  top: 1.25rem;
+  bottom: 1.25rem;
+  left: 0;
+  width: 3px;
+  content: '';
+  border-radius: 0 2px 2px 0;
+  background: var(--kind-color);
+  opacity: 0.55;
+}
+
+.level-label > span {
   writing-mode: vertical-rl;
 }
 
@@ -414,19 +576,7 @@
   left: 0;
   height: 3px;
   content: '';
-  background: #0f6cbd;
-}
-
-.story-node[data-kind='epic']::before {
-  background: #107c10;
-}
-
-.story-node[data-kind='story']::before {
-  background: #8764b8;
-}
-
-.story-node[data-kind='substory']::before {
-  background: #ca5010;
+  background: var(--kind-color);
 }
 
 .story-node:hover {
@@ -436,8 +586,24 @@
 }
 
 .story-node.is-selected {
-  border-color: #0f6cbd;
-  box-shadow: 0 0 0 2px #c7e0f4, 0 6px 16px rgba(0, 0, 0, 0.08);
+  border-color: var(--kind-color);
+  box-shadow: 0 0 0 2px var(--kind-stroke), 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+
+/* Briefly marks nodes that AI generation just added. */
+.story-node.is-fresh {
+  animation: fresh-node 2.4s ease-out;
+}
+
+@keyframes fresh-node {
+  0%,
+  40% {
+    box-shadow: 0 0 0 3px rgba(163, 60, 184, 0.45), 0 6px 16px rgba(91, 63, 196, 0.18);
+  }
+
+  100% {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.04);
+  }
 }
 
 /* Fluent Text injects display/overflow atomic classes; the child selector outranks them. */
@@ -445,8 +611,6 @@
   display: -webkit-box;
   box-sizing: border-box;
   max-width: 100%;
-  /* Keep text clear of the drag handle in the top-right corner. */
-  padding-right: 22px;
   overflow: hidden;
   line-height: 20px;
   overflow-wrap: anywhere;
@@ -454,7 +618,7 @@
   -webkit-line-clamp: 3;
 }
 
-/* Straddles the card's bottom edge on the outgoing connector, clear of the kind badge. */
+/* Straddles the card's bottom edge on the outgoing connector. */
 .node-add-action {
   position: absolute !important;
   z-index: 10;
@@ -471,6 +635,35 @@
 .node-slot:hover .node-add-action,
 .node-add-action:focus-visible {
   opacity: 1;
+}
+
+/* Sits beside the add-child control so the connector line stays centred under the card. */
+.node-ai-action {
+  position: absolute !important;
+  z-index: 10;
+  bottom: -14px;
+  left: calc(50% + 34px);
+  min-width: 28px !important;
+  width: 28px;
+  height: 28px;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 150ms ease;
+}
+
+.node-slot:hover .node-ai-action,
+.node-ai-action:focus-visible {
+  opacity: 1;
+}
+
+.node-ai-action .fui-Button__icon {
+  color: var(--ai-color) !important;
+}
+
+/* Add buttons take the colour of the kind they create. */
+.node-add-action[data-kind] .fui-Button__icon,
+.sibling-add-action[data-kind] .fui-Button__icon {
+  color: var(--kind-color) !important;
 }
 
 .sibling-add-action {
@@ -493,23 +686,6 @@
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0) scale(1);
-}
-
-.node-drag-action {
-  position: absolute !important;
-  z-index: 10;
-  top: 6px;
-  right: 6px;
-  min-width: 28px !important;
-  width: 28px;
-  height: 28px;
-  color: #707070 !important;
-  cursor: grab;
-  touch-action: none;
-}
-
-.node-drag-action:active {
-  cursor: grabbing;
 }
 
 .map-branch.is-drop-target > .branch-visual > .node-slot .story-node {
@@ -652,7 +828,7 @@
     padding-left: 1rem;
   }
 
-  .error-toast {
+  .notice-toast {
     right: 12px;
     bottom: 12px;
     width: calc(100vw - 24px);
@@ -660,7 +836,8 @@
 }
 
 @media (hover: none) {
-  .node-add-action {
+  .node-add-action,
+  .node-ai-action {
     opacity: 1;
   }
 
@@ -676,7 +853,14 @@
   .sidebar-scrim,
   .story-node,
   .node-add-action,
+  .node-ai-action,
   .sibling-add-action {
     transition: none;
+  }
+
+  .story-node.is-fresh {
+    animation: none;
+    outline: 2px solid var(--ai-color);
+    outline-offset: 2px;
   }
 }

@@ -2,11 +2,10 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { appSource } from './test-support.ts'
 import { CSS } from '@dnd-kit/utilities'
-import { readFileSync } from 'node:fs'
 import { resolveDragSourceTransform, sortableTransformToString } from './sortable-transform.ts'
 
-const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
 
 test('sortable branches translate without inheriting dnd-kit scale', () => {
   const transform = { x: 18, y: -9, scaleX: 1.75, scaleY: 0.6 }

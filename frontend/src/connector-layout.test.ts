@@ -1,11 +1,10 @@
 /// <reference types="node" />
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { appSource, styles } from './test-support.ts'
 
-const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
-const connectorStyles = readFileSync(new URL('./App.css', import.meta.url), 'utf8')
+const connectorStyles = styles
 
 function cssRuleStartingWith(selector: string) {
   const start = connectorStyles.indexOf(selector)

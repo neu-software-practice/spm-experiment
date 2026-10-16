@@ -1,11 +1,9 @@
 /// <reference types="node" />
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { appSource, styles } from './test-support.ts'
 
-const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
-const styles = readFileSync(new URL('./App.css', import.meta.url), 'utf8')
 
 test('provider layout styles do not leak onto Fluent portal mount nodes', () => {
   // Fluent copies the provider className onto portals; a full-height background there hides the page behind dialogs.
@@ -26,14 +24,16 @@ test('the sidebar is opaque so the map does not show through the narrow-screen o
   assert.doesNotMatch(sidebar, /backdrop-filter|background:\s*rgba/)
 })
 
-test('node titles leave room for the drag handle and clamp to three lines', () => {
+test('node cards show only the title, clamped to three lines', () => {
   const title = styles.match(/\.story-node > \.story-node-title\s*\{([^}]*)\}/)?.[1] ?? ''
-  assert.match(title, /padding-right:\s*22px;/)
+  assert.doesNotMatch(title, /padding-right/)
+  const card = appSource.match(/<Card[\s\S]*?<\/Card>/)?.[0] ?? ''
+  assert.doesNotMatch(card, /KindBadge|Badge/)
   // Fluent Text atomic classes override display/overflow unless the selector is more specific.
   assert.match(title, /display:\s*-webkit-box;[\s\S]*overflow:\s*hidden;[\s\S]*-webkit-line-clamp:\s*3;/)
 })
 
-test('the add-child control sits on the card edge instead of over the kind badge', () => {
+test('the add-child control straddles the card bottom edge', () => {
   assert.match(styles, /\.node-add-action\s*\{[^}]*bottom:\s*-14px;/)
   assert.match(appSource, /appearance="secondary"\s+size="small"\s+icon=\{<Add20Regular \/>\}\s+className="node-add-action"/)
 })

@@ -1,8 +1,8 @@
 /// <reference types="node" />
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { appSource } from './test-support.ts'
 import {
   horizontalCenterDistance,
   isActiveCardCenterWithinInitialHorizontalRange,
@@ -11,7 +11,6 @@ import {
   type NodeKind,
 } from './drag-collision.ts'
 
-const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
 
 const parentTargets: Array<[active: NodeKind, parent: NodeKind]> = [
   ['substory', 'story'],
