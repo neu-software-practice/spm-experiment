@@ -508,3 +508,36 @@ func TestGenerateSubtreeValidatesPlanBeforeCallingAI(t *testing.T) {
 		t.Fatalf("largest allowed plan rejected or miscounted: %#v %v", plan, err)
 	}
 }
+
+func TestGenerationContextIncludesWholeProjectMap(t *testing.T) {
+	f := newGenerationFixture(t)
+	reader, err := f.store.CreateNode(f.project.ID, KindRole, "", "读者")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.CreateNode(f.project.ID, KindEpic, reader.ID, "阅读文章"); err != nil {
+		t.Fatal(err)
+	}
+	var gotInput GenerationInput
+	generator := generatorFunc(func(_ context.Context, input GenerationInput) ([]string, error) {
+		gotInput = input
+		return []string{"新故事"}, nil
+	})
+	response := performGeneration(NewRouter(f.store, generator), f.path(f.epic), `{"count":1}`)
+	assertStatus(t, response, http.StatusCreated)
+	want := []ProjectMapNode{
+		{Name: "内容创作者", Kind: KindRole, Children: []ProjectMapNode{
+			{Name: "发布文章", Kind: KindEpic, Target: true, Children: []ProjectMapNode{
+				{Name: "添加封面", Kind: KindStory, Children: []ProjectMapNode{{Name: "选择封面图片", Kind: KindSubstory}}},
+			}},
+		}},
+		{Name: "读者", Kind: KindRole, Children: []ProjectMapNode{{Name: "阅读文章", Kind: KindEpic}}},
+	}
+	if !reflect.DeepEqual(gotInput.ProjectMap, want) {
+		t.Fatalf("project map = %#v", gotInput.ProjectMap)
+	}
+	raw, _ := json.Marshal(gotInput)
+	if strings.Contains(string(raw), f.epic.ID) || strings.Contains(string(raw), reader.ID) {
+		t.Fatal("project map leaks internal IDs")
+	}
+}

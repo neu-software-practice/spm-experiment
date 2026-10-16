@@ -75,6 +75,7 @@ type generationSnapshot struct {
 	Ancestors   []Node
 	Children    []Node
 	ChildKind   NodeKind
+	ProjectMap  []ProjectMapNode
 }
 
 func generationContext(project Project, parentID string) (generationSnapshot, error) {
@@ -100,12 +101,31 @@ func generationContext(project Project, parentID string) (generationSnapshot, er
 		ancestorID = ancestor.ParentID
 	}
 	slices.Reverse(snapshot.Ancestors)
+	snapshot.ProjectMap = projectMap(project.Nodes, "", parent.ID, map[string]bool{})
 	for _, node := range project.Nodes {
 		if node.ParentID == parent.ID {
 			snapshot.Children = append(snapshot.Children, node)
 		}
 	}
 	return snapshot, nil
+}
+
+// projectMap nests the nodes under parentID in stored order, names and kinds only.
+func projectMap(nodes []Node, parentID, targetID string, seen map[string]bool) []ProjectMapNode {
+	var level []ProjectMapNode
+	for _, node := range nodes {
+		if node.ParentID != parentID || seen[node.ID] {
+			continue
+		}
+		seen[node.ID] = true
+		level = append(level, ProjectMapNode{
+			Name:     node.Name,
+			Kind:     node.Kind,
+			Target:   node.ID == targetID,
+			Children: projectMap(nodes, node.ID, targetID, seen),
+		})
+	}
+	return level
 }
 
 func (snapshot generationSnapshot) input(plan generationPlan, prompt string) GenerationInput {
@@ -119,6 +139,7 @@ func (snapshot generationSnapshot) input(plan generationPlan, prompt string) Gen
 		DescendantKinds:  plan.DescendantKinds,
 		DescendantCount:  plan.DescendantCount,
 		Prompt:           prompt,
+		ProjectMap:       snapshot.ProjectMap,
 	}
 	for _, node := range snapshot.Ancestors {
 		input.Ancestors = append(input.Ancestors, GenerationNode{Name: node.Name, Kind: node.Kind})

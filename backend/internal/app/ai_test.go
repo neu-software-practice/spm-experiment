@@ -97,6 +97,13 @@ func TestAIHTTPIntegrationIncludesContextAndExtraPrompt(t *testing.T) {
 		ExistingChildren: []string{"选择封面图片"},
 		Count:            2,
 		Prompt:           "重点考虑移动端，避免重复已有步骤",
+		ProjectMap: []ProjectMapNode{{Name: "内容创作者", Kind: KindRole, Children: []ProjectMapNode{
+			{Name: "发布文章", Kind: KindEpic, Children: []ProjectMapNode{
+				{Name: "添加封面", Kind: KindStory, Target: true, Children: []ProjectMapNode{
+					{Name: "选择封面图片", Kind: KindSubstory},
+				}},
+			}},
+		}}},
 	}
 	captured := <-observed
 	if !reflect.DeepEqual(captured.input, want) || captured.model != "test-model" || !strings.Contains(captured.systemPrompt, "JSON") {
@@ -146,6 +153,28 @@ func TestAIHTTPIntegrationParsesNestedSubtree(t *testing.T) {
 	want := []string{"story:上传图片", "substory:选择本地文件", "story:排版正文", "substory:调整段落"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("nested subtree not saved depth first: %v", names)
+	}
+}
+
+func TestAIContextFallsBackToLocalContextWhenMapIsTooLarge(t *testing.T) {
+	sent := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []chatMessage `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		sent <- request.Messages[1].Content
+		fmt.Fprint(w, completionJSON(`{"children":[{"name":"新步骤"}]}`, "stop"))
+	}))
+	defer upstream.Close()
+	generator := testAIGenerator(t, upstream.URL, time.Second)
+	bigMap := []ProjectMapNode{{Name: strings.Repeat("长", maxAIContext), Kind: KindRole}}
+	input := GenerationInput{ProjectName: "内容平台", Count: 1, ProjectMap: bigMap}
+	if _, err := generator.GenerateChildren(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if content := <-sent; strings.Contains(content, "projectMap") || !strings.Contains(content, "内容平台") {
+		t.Fatalf("oversized map was not dropped: %.200s", content)
 	}
 }
 

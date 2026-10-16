@@ -119,6 +119,7 @@
 
 | 日期 | 变更 | 关联页面文件 |
 | --- | --- | --- |
+| 2026-10-16 | AI 生成时附带整个项目地图（仅名称与层级、标记目标父节点），模型可参考其他分支避免重复；地图过大时自动退回局部上下文。前端无改动。 | `backend/internal/app/ai.go`、`backend/internal/app/generation.go`、`backend/internal/app/*_test.go`、`docs/backend-api.md` |
 | 2026-10-16 | AI 生成支持「{层级}及所有下级」：一次请求生成到二级故事层，每层按设定数量展开，单次最多 100 个节点，模型返回嵌套结构后由后端整批校验并一次保存；弹窗显示各层预计数量，成功提示按层级汇总。 | `backend/internal/app/ai.go`、`backend/internal/app/generation.go`、`backend/internal/app/router.go`、`backend/internal/app/*_test.go`、`frontend/src/components/Dialogs.tsx`、`frontend/src/model.ts`、`frontend/src/api.ts`、`frontend/src/App.tsx`、`frontend/src/model.test.ts`、`docs/backend-api.md` |
 | 2026-10-16 | 收窄同级换位判定：拖动卡片中心须进入目标同级卡片并越过其宽度 1/4 才换位，此前只要移出原位就与方向上最近的同级换位，史诗间有宽子树时过于敏感；目标按原始布局位置判定，换位动画不会造成来回抖动。 | `frontend/src/drag-collision.ts`、`frontend/src/components/StoryMap.tsx`、`frontend/src/drag-collision.test.ts` |
 | 2026-10-15 | 移除节点卡片右上角的拖拽图标和左下角的类型徽标；整张卡片作为拖拽激活区，单击或 Enter 打开编辑，空格进行键盘拖拽。 | `frontend/src/components/StoryMap.tsx`、`frontend/src/App.css`、`frontend/src/drag-handle-hover.test.ts`、`frontend/src/layout-styles.test.ts` |
