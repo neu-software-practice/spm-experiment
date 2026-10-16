@@ -8,6 +8,7 @@ import {
   isActiveCardCenterWithinInitialHorizontalRange,
   isEligibleNodeDropTarget,
   isTargetInDragDirection,
+  isWithinSiblingSwapZone,
   type NodeKind,
 } from './drag-collision.ts'
 
@@ -140,5 +141,40 @@ test('the collision detector filters same-level targets by drag direction', () =
   assert.match(
     appSource,
     /isTargetInDragDirection\([\s\S]*?activeCardRect,[\s\S]*?args\.collisionRect,[\s\S]*?args\.active\.rect\.current\.initial,[\s\S]*?rect,?[\s\S]*?\)/,
+  )
+})
+
+test('a sibling only swaps once the dragged card center is a quarter inside it', () => {
+  // A starts at 100..228; its neighbour B sits at 244..372 (16px gap), C much further right.
+  const initialBranchRect = { top: 0, right: 228, bottom: 128, left: 100 }
+  const neighbour = { top: 0, right: 372, bottom: 128, left: 244 }
+  const farSibling = { top: 0, right: 828, bottom: 128, left: 700 }
+  const movedBy = (dx: number) => ({ top: 0, right: 228 + dx, bottom: 128, left: 100 + dx })
+
+  // Leaving the starting slot (center past 228) is no longer enough.
+  assert.equal(isWithinSiblingSwapZone(movedBy(80), movedBy(80), initialBranchRect, neighbour), false)
+  // Center 164 + 111 = 275 is still short of 244 + 32.
+  assert.equal(isWithinSiblingSwapZone(movedBy(111), movedBy(111), initialBranchRect, neighbour), false)
+  assert.equal(isWithinSiblingSwapZone(movedBy(112), movedBy(112), initialBranchRect, neighbour), true)
+  // A wide subtree between siblings means travelling all the way to the far card.
+  assert.equal(isWithinSiblingSwapZone(movedBy(200), movedBy(200), initialBranchRect, farSibling), false)
+  assert.equal(isWithinSiblingSwapZone(movedBy(568), movedBy(568), initialBranchRect, farSibling), true)
+})
+
+test('dragging left mirrors the sibling swap zone', () => {
+  const initialBranchRect = { top: 0, right: 372, bottom: 128, left: 244 }
+  const previous = { top: 0, right: 228, bottom: 128, left: 100 }
+  const movedBy = (dx: number) => ({ top: 0, right: 372 + dx, bottom: 128, left: 244 + dx })
+
+  assert.equal(isWithinSiblingSwapZone(movedBy(-111), movedBy(-111), initialBranchRect, previous), false)
+  assert.equal(isWithinSiblingSwapZone(movedBy(-112), movedBy(-112), initialBranchRect, previous), true)
+  assert.equal(isWithinSiblingSwapZone(movedBy(0), movedBy(0), initialBranchRect, previous), false)
+})
+
+test('the collision detector measures siblings in the static layout and gates them by the swap zone', () => {
+  assert.match(appSource, /const rect = layoutCardRect\(droppableContainer\.node\.current\)/)
+  assert.match(
+    appSource,
+    /isWithinSiblingSwapZone\([\s\S]*?activeCardRect,[\s\S]*?args\.collisionRect,[\s\S]*?args\.active\.rect\.current\.initial,[\s\S]*?rect,?[\s\S]*?\)/,
   )
 })

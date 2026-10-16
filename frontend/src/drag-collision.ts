@@ -40,6 +40,29 @@ export function isTargetInDragDirection(
   return deltaX < 0 ? targetCenterX < initialCenterX : targetCenterX > initialCenterX
 }
 
+/** Share of the target card's width the dragged card's center must travel into before they swap. */
+export const SIBLING_SWAP_DEPTH = 0.25
+
+/**
+ * Whether a same-level target is close enough to swap with: the dragged card's center has to enter
+ * the target card from the drag side and pass SIBLING_SWAP_DEPTH of its width. Leaving the starting
+ * slot alone is not enough, so a neighbour with a wide subtree no longer swaps after a short nudge.
+ */
+export function isWithinSiblingSwapZone(
+  currentCardRect: Rect,
+  currentBranchRect: Rect,
+  initialBranchRect: Rect | null,
+  targetRect: Rect,
+) {
+  if (!initialBranchRect) return true
+  const deltaX = currentBranchRect.left - initialBranchRect.left
+  const centerX = (currentCardRect.left + currentCardRect.right) / 2
+  const inset = (targetRect.right - targetRect.left) * SIBLING_SWAP_DEPTH
+  if (deltaX > 0) return centerX >= targetRect.left + inset
+  if (deltaX < 0) return centerX <= targetRect.right - inset
+  return false
+}
+
 export function horizontalCenterDistance(first: Rect, second: Rect) {
   const firstCenterX = (first.left + first.right) / 2
   const secondCenterX = (second.left + second.right) / 2

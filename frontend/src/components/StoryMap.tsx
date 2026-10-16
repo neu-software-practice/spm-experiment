@@ -30,11 +30,21 @@ import {
   isActiveCardCenterWithinInitialHorizontalRange,
   isEligibleNodeDropTarget,
   isTargetInDragDirection,
+  isWithinSiblingSwapZone,
   parentKinds,
   type NodeKind,
 } from '@/drag-collision'
 import { childKinds, childrenOf, nodeKinds, nodeLabels, type CreateTarget, type StoryNode } from '@/model'
 import { resolveDragSourceTransform, sortableTransformToString } from '@/sortable-transform'
+
+/** The card's rect in the static layout, ignoring the shift sorting applies to its branch. */
+function layoutCardRect(branch: HTMLElement | null) {
+  const card = branch?.querySelector<HTMLElement>(':scope > .branch-visual > .node-slot')
+  if (!branch || !card) return undefined
+  const { left, top } = branch.getBoundingClientRect()
+  const { width, height } = card.getBoundingClientRect()
+  return { left, top, right: left + width, bottom: top + height }
+}
 
 const snapToNodeCollision: CollisionDetection = (args) => {
   const activeContainer = args.droppableContainers.find(
@@ -83,8 +93,15 @@ const snapToNodeCollision: CollisionDetection = (args) => {
   if (activeCardRect && sameKindContainers.length > 0) {
     return sameKindContainers
       .flatMap((droppableContainer) => {
-        const rect = droppableRects.get(droppableContainer.id)
+        // Measure siblings where they sit in the layout, not where sorting has shifted them, so a swap
+        // that slides the target away does not immediately undo itself.
+        const rect = layoutCardRect(droppableContainer.node.current)
         return rect && isTargetInDragDirection(
+          activeCardRect,
+          args.collisionRect,
+          args.active.rect.current.initial,
+          rect,
+        ) && isWithinSiblingSwapZone(
           activeCardRect,
           args.collisionRect,
           args.active.rect.current.initial,
