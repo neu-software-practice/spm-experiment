@@ -12,12 +12,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("load AI configuration: %v", err)
 	}
-	generator, err := app.NewAIChildGenerator(aiConfig)
+	model, err := app.NewChatModel(aiConfig)
 	if err != nil {
-		log.Fatalf("configure AI generation: %v", err)
+		log.Fatalf("configure AI assistant: %v", err)
 	}
-	if generator == nil {
-		log.Print("AI generation disabled: configure AI_API_KEY and AI_MODEL to enable")
+	if model == nil {
+		log.Print("AI assistant disabled: configure AI_API_KEY and AI_MODEL to enable")
 	}
 
 	dataFile := os.Getenv("DATA_FILE")
@@ -35,7 +35,7 @@ func main() {
 		port = "8080"
 	}
 
-	if err := app.NewRouter(store, generator).Run(":" + port); err != nil {
+	if err := app.NewRouter(store, model).Run(":" + port); err != nil {
 		log.Fatal(err)
 	}
 }

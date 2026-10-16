@@ -161,6 +161,7 @@ function NodeCard({
         {...drag.attributes}
         {...drag.listeners}
         data-kind={node.kind}
+        data-node-id={node.id}
         role="button"
         tabIndex={0}
         aria-pressed={selected}
@@ -205,8 +206,8 @@ function NodeCard({
             event.stopPropagation()
             onGenerate()
           }}
-          aria-label={`AI 为${node.name}生成${nodeLabels[childKind]}`}
-          title="AI 生成子节点"
+          aria-label={`在 AI 助手中为${node.name}拆分${nodeLabels[childKind]}`}
+          title="交给 AI 助手"
         />
       )}
       <Button
@@ -301,6 +302,8 @@ type BranchProps = {
   aiEnabled: boolean
   onSelect: (node: StoryNode) => void
   onCreate: (target: CreateTarget) => void
+  /** Opens the assistant with a draft about the node. */
+  onAsk: (draft: string) => void
 }
 
 /** One node and, recursively, its subtree; each level is its own sortable group. */
@@ -316,7 +319,7 @@ function NodeBranch({ node, ...props }: BranchProps & { node: StoryNode }) {
       onSelect={props.onSelect}
       onAdd={childKind && (() => props.onCreate({ kind: childKind, parentId: node.id }))}
       onGenerate={childKind && props.aiEnabled
-        ? () => props.onCreate({ kind: childKind, parentId: node.id, mode: 'ai' })
+        ? () => props.onAsk(`帮我为「${node.name}」拆分${nodeLabels[childKind]}`)
         : undefined}
       onAddSibling={() => props.onCreate({ kind: node.kind, parentId: node.parentId, afterId: node.id })}
     >

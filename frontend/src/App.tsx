@@ -24,9 +24,12 @@ import {
   Edit20Regular,
   MoreHorizontal20Regular,
   Navigation20Regular,
+  Sparkle20Filled,
 } from '@fluentui/react-icons'
 import type { DragEndEvent } from '@dnd-kit/core'
-import { api, RequestCancelled, type GenerateOptions } from '@/api'
+import { api } from '@/api'
+import { undoableTurnId } from '@/assistant'
+import { AssistantPanel } from '@/components/AssistantPanel'
 import { CreateDialog, DeleteDialog, RenameProjectDialog } from '@/components/Dialogs'
 import { NodeSheet } from '@/components/NodeSheet'
 import { ProjectSidebar } from '@/components/ProjectSidebar'
@@ -34,9 +37,7 @@ import { StoryMap } from '@/components/StoryMap'
 import {
   childKinds,
   childrenOf,
-  countByKind,
   descendantIds,
-  describeLevelCounts,
   moveNode,
   nodeKinds,
   parentKinds,
@@ -47,12 +48,37 @@ import {
   type StoryNode,
 } from '@/model'
 import { insertAfter } from '@/node-order'
+import { useAssistant } from '@/useAssistant'
 import './App.css'
 
 type Notice = { intent: 'error' | 'success'; title: string; message: string }
 
 const lastProjectKey = 'spm:lastProject'
+const assistantOpenKey = 'spm:assistantOpen'
 const freshHighlightMs = 2400
+
+function readAssistantOpen() {
+  try {
+    return window.localStorage.getItem(assistantOpenKey) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+function suggestionsFor(project: Project | null) {
+  if (!project) return []
+  if (!project.nodes.some((node) => node.kind === 'role')) {
+    return [
+      '这是一个帮助大学生交易二手教材的小程序，帮我搭建故事地图',
+      '先问我几个问题，再帮我梳理这个项目的角色和史诗',
+    ]
+  }
+  return [
+    '检查地图里有没有遗漏的关键步骤，先列出来给我确认',
+    '把用户故事的命名统一成用户视角的动宾短语',
+    '为每个还没有用户故事的史诗补充 3 个用户故事',
+  ]
+}
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -68,8 +94,10 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [aiEnabled, setAIEnabled] = useState<boolean>()
   const [freshIds, setFreshIds] = useState<ReadonlySet<string>>(new Set())
+  const [assistantOpen, setAssistantOpen] = useState(readAssistantOpen)
+  const [draft, setDraft] = useState('')
   const noticeTimer = useRef<number>(undefined)
-  const generation = useRef<AbortController>(undefined)
+  const freshTimer = useRef<number>(undefined)
 
   const nodes = project?.nodes ?? []
   const selectedNode = nodes.find((node) => node.id === selectedId)
@@ -151,43 +179,40 @@ function App() {
     }
   }
 
-  const generateChildren = async (parentId: string, options: GenerateOptions) => {
-    if (!project) return
-    const projectId = project.id
-    const controller = new AbortController()
-    generation.current = controller
-    setBusy(true)
+  const closeCreateDialog = () => setCreateTarget(undefined)
+
+  const highlight = (ids: string[]) => {
+    const next = new Set(ids)
+    setFreshIds(next)
+    window.clearTimeout(freshTimer.current)
+    freshTimer.current = window.setTimeout(() => setFreshIds(new Set()), freshHighlightMs)
+    // Bring the first changed card into view once React has rendered it.
+    window.requestAnimationFrame(() => {
+      document.querySelector(`[data-node-id="${ids[0]}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    })
+  }
+
+  const assistant = useAssistant({
+    projectId: project?.id,
+    nodes,
+    onProject: (updated) => setProject((current) => current?.id === updated.id ? updated : current),
+    onChanged: highlight,
+    onReload: (projectId) => void loadProject(projectId),
+  })
+
+  const toggleAssistant = (open: boolean) => {
+    setAssistantOpen(open)
     try {
-      const result = await api.generateChildren(projectId, parentId, options, controller.signal)
-      // The backend appends the batch after the parent's existing children.
-      setProject((current) => current?.id === projectId
-        ? { ...current, nodes: [...current.nodes, ...result.nodes] }
-        : current)
-      const ids = new Set(result.nodes.map((node) => node.id))
-      setFreshIds(ids)
-      window.setTimeout(() => setFreshIds((current) => current === ids ? new Set() : current), freshHighlightMs)
-      setCreateTarget(undefined)
-      notify({
-        intent: 'success',
-        title: 'AI 生成完成',
-        message: `已新增 ${describeLevelCounts(countByKind(result.nodes)) || '0 个节点'}。`,
-      })
-    } catch (reason) {
-      if (reason instanceof RequestCancelled) {
-        // The server may have finished before the abort arrived; reload to show what was saved.
-        void loadProject(projectId)
-      } else {
-        showError(reason)
-      }
-    } finally {
-      if (generation.current === controller) generation.current = undefined
-      setBusy(false)
+      window.localStorage.setItem(assistantOpenKey, String(open))
+    } catch {
+      // Only a convenience.
     }
   }
 
-  const closeCreateDialog = () => {
-    generation.current?.abort()
-    setCreateTarget(undefined)
+  const askAssistant = (text: string) => {
+    setSelectedId(undefined)
+    setDraft(text)
+    toggleAssistant(true)
   }
 
   const renameNode = async (name: string) => {
@@ -281,7 +306,7 @@ function App() {
 
   return (
     <FluentProvider theme={webLightTheme} className="fluent-root">
-      <div className="app-shell">
+      <div className={`app-shell${assistantOpen ? ' has-assistant' : ''}`}>
         <ProjectSidebar
           projects={projects}
           activeId={project?.id}
@@ -308,7 +333,16 @@ function App() {
             </div>
             {project && (
               <div className="command-actions">
-                <Button appearance="primary" icon={<Add20Regular />} onClick={() => setCreateTarget({ kind: 'role' })}>
+                <Button
+                  appearance={assistantOpen ? 'secondary' : 'outline'}
+                  icon={<Sparkle20Filled className="icon-ai" />}
+                  className={`assistant-toggle${assistantOpen ? ' is-open' : ''}`}
+                  aria-pressed={assistantOpen}
+                  onClick={() => toggleAssistant(!assistantOpen)}
+                >
+                  AI 助手
+                </Button>
+                <Button appearance="primary" icon={<Add20Regular />} className="add-role-button" onClick={() => setCreateTarget({ kind: 'role' })}>
                   新增角色
                 </Button>
                 <Menu>
@@ -358,10 +392,29 @@ function App() {
               aiEnabled={Boolean(aiEnabled)}
               onSelect={(node) => setSelectedId(node.id)}
               onCreate={setCreateTarget}
+              onAsk={askAssistant}
               onReorder={(event) => void reorderNodes(event)}
             />
           )}
         </main>
+
+        {assistantOpen && project && (
+          <AssistantPanel
+            projectName={project.name}
+            aiEnabled={aiEnabled}
+            turns={assistant.turns}
+            streaming={assistant.streaming}
+            undoableId={undoableTurnId(assistant.turns)}
+            draft={draft}
+            suggestions={suggestionsFor(project)}
+            onDraftChange={setDraft}
+            onSend={(text) => void assistant.send(text)}
+            onStop={assistant.stop}
+            onUndo={(turnId) => assistant.undo(turnId).catch(showError)}
+            onReset={assistant.reset}
+            onClose={() => toggleAssistant(false)}
+          />
+        )}
 
         {selectedNode && (
           <NodeSheet
@@ -374,25 +427,17 @@ function App() {
             onClose={() => setSelectedId(undefined)}
             onSave={renameNode}
             onDelete={() => setDeleteTarget({ type: 'node', node: selectedNode })}
-            onGenerate={() => {
-              const kind = childKinds[selectedNode.kind]
-              if (!kind) return
-              setSelectedId(undefined)
-              setCreateTarget({ kind, parentId: selectedNode.id, mode: 'ai' })
-            }}
+            onAsk={askAssistant}
           />
         )}
 
         <CreateDialog
-          key={createTarget ? `${createTarget.kind}-${createTarget.parentId ?? ''}-${createTarget.afterId ?? ''}-${createTarget.mode ?? ''}` : 'closed'}
+          key={createTarget ? `${createTarget.kind}-${createTarget.parentId ?? ''}-${createTarget.afterId ?? ''}` : 'closed'}
           target={createTarget}
           parents={createParents}
-          existingChildren={countChildren}
-          aiEnabled={Boolean(aiEnabled)}
           busy={busy}
           onClose={closeCreateDialog}
           onSubmit={createItem}
-          onGenerate={generateChildren}
         />
 
         {renameProjectOpen && project && (

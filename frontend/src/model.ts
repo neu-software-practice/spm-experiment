@@ -17,7 +17,6 @@ export type CreateTarget = {
   kind: NodeKind | 'project'
   parentId?: string
   afterId?: string
-  mode?: 'manual' | 'ai'
 }
 
 export type DeleteTarget =
@@ -45,39 +44,6 @@ export const childKinds: Partial<Record<NodeKind, NodeKind>> = {
   role: 'epic',
   epic: 'story',
   story: 'substory',
-}
-
-// Mirrors the generate-children request limits in docs/backend-api.md.
-export const aiCountRange = { min: 1, max: 10, default: 3 }
-export const aiPromptMaxLength = 2000
-export const aiDescendantRange = { min: 1, max: 5, default: 3 }
-export const aiMaxGeneratedNodes = 100
-
-/** The levels under kind, nearest first. */
-export function levelsBelow(kind: NodeKind) {
-  const levels: NodeKind[] = []
-  for (let next = childKinds[kind]; next; next = childKinds[next]) levels.push(next)
-  return levels
-}
-
-/** How many nodes of each level one generation creates under a node whose children are childKind. */
-export function generationPlan(childKind: NodeKind, count: number, descendantCount?: number) {
-  const levels = descendantCount ? [childKind, ...levelsBelow(childKind)] : [childKind]
-  let perLevel = count
-  return levels.map((kind) => {
-    const level = { kind, count: perLevel }
-    perLevel *= descendantCount ?? 0
-    return level
-  })
-}
-
-/** "2 个史诗、4 个用户故事" for created nodes or a plan, skipping empty levels. */
-export function describeLevelCounts(levels: { kind: NodeKind; count: number }[]) {
-  return levels.filter((level) => level.count > 0).map((level) => `${level.count} 个${nodeLabels[level.kind]}`).join('、')
-}
-
-export function countByKind(nodes: StoryNode[]) {
-  return nodeKinds.map((kind) => ({ kind, count: nodes.filter((node) => node.kind === kind).length }))
 }
 
 export { parentKinds }

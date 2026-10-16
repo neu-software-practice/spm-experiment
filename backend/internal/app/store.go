@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 )
 
 type NodeKind string
@@ -420,4 +422,165 @@ func seedDatabase() database {
 			{ID: newID(), Kind: KindSubstory, ParentID: storyMap.ID, Name: "拆分用户故事"},
 		},
 	}}}
+}
+
+const (
+	maxNodeName   = 80
+	maxTreeAppend = 100
+)
+
+var (
+	ErrDuplicateName = errors.New("duplicate sibling name")
+	ErrNameTooLong   = errors.New("name is too long")
+	ErrTooDeep       = errors.New("tree goes below substory")
+	ErrTooManyNodes  = errors.New("too many nodes in one change")
+)
+
+var childKindOf = map[NodeKind]NodeKind{KindRole: KindEpic, KindEpic: KindStory, KindStory: KindSubstory}
+
+// NewNode is a node to create together with its descendants.
+type NewNode struct {
+	Name     string    `json:"name"`
+	Children []NewNode `json:"children,omitempty"`
+}
+
+func cleanNodeName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	switch {
+	case name == "" || !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl):
+		return "", ErrInvalidName
+	case utf8.RuneCountInString(name) > maxNodeName:
+		return "", ErrNameTooLong
+	}
+	return name, nil
+}
+
+// AppendTree adds tree under parentID ("" for roles) in one save. Each level's
+// kind follows from its depth; new siblings must not share a name with each
+// other or, at the top, with the parent's existing children.
+func (s *Store) AppendTree(projectID, parentID string, tree []NewNode) ([]Node, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	projectIndex := s.projectIndex(projectID)
+	if projectIndex < 0 {
+		return nil, ErrNotFound
+	}
+	project := &s.data.Projects[projectIndex]
+	kind := KindRole
+	if parentID != "" {
+		index := nodeIndex(project.Nodes, parentID)
+		if index < 0 {
+			return nil, ErrNotFound
+		}
+		kind = childKindOf[project.Nodes[index].Kind]
+		if kind == "" {
+			return nil, ErrTooDeep
+		}
+	}
+	var existing []string
+	for _, node := range project.Nodes {
+		if node.ParentID == parentID && node.Kind == kind {
+			existing = append(existing, node.Name)
+		}
+	}
+	var created []Node
+	if err := appendTreeLevel(&created, parentID, kind, tree, existing); err != nil {
+		return nil, err
+	}
+	if len(created) == 0 {
+		return nil, ErrInvalidName
+	}
+	if len(created) > maxTreeAppend {
+		return nil, ErrTooManyNodes
+	}
+	previous := project.Nodes
+	project.Nodes = append(append([]Node{}, previous...), created...)
+	if err := s.saveLocked(); err != nil {
+		project.Nodes = previous
+		return nil, err
+	}
+	return created, nil
+}
+
+// appendTreeLevel validates one sibling group and, depth first, the levels
+// under it. Parents land in created before their children.
+func appendTreeLevel(created *[]Node, parentID string, kind NodeKind, level []NewNode, existing []string) error {
+	seen := make(map[string]bool, len(existing)+len(level))
+	for _, name := range existing {
+		seen[strings.ToLower(strings.TrimSpace(name))] = true
+	}
+	for _, item := range level {
+		name, err := cleanNodeName(item.Name)
+		if err != nil {
+			return err
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return fmt.Errorf("%w: %s", ErrDuplicateName, name)
+		}
+		seen[key] = true
+		node := Node{ID: newID(), Kind: kind, ParentID: parentID, Name: name}
+		*created = append(*created, node)
+		if len(item.Children) == 0 {
+			continue
+		}
+		childKind := childKindOf[kind]
+		if childKind == "" {
+			return ErrTooDeep
+		}
+		if err := appendTreeLevel(created, node.ID, childKind, item.Children, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ReplaceNodes swaps in a whole node list, e.g. to undo an assistant turn.
+// The list must be a valid map on its own.
+func (s *Store) ReplaceNodes(projectID string, nodes []Node) (Project, error) {
+	if err := validateNodes(nodes); err != nil {
+		return Project{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	projectIndex := s.projectIndex(projectID)
+	if projectIndex < 0 {
+		return Project{}, ErrNotFound
+	}
+	project := &s.data.Projects[projectIndex]
+	previous := project.Nodes
+	project.Nodes = append([]Node{}, nodes...)
+	if err := s.saveLocked(); err != nil {
+		project.Nodes = previous
+		return Project{}, err
+	}
+	return cloneProject(*project), nil
+}
+
+func validateNodes(nodes []Node) error {
+	kinds := make(map[string]NodeKind, len(nodes))
+	for _, node := range nodes {
+		if node.ID == "" || kinds[node.ID] != "" {
+			return ErrInvalidOrder
+		}
+		if _, err := cleanNodeName(node.Name); err != nil {
+			return err
+		}
+		kinds[node.ID] = node.Kind
+	}
+	for _, node := range nodes {
+		switch node.Kind {
+		case KindRole:
+			if node.ParentID != "" {
+				return ErrInvalidParent
+			}
+		case KindEpic, KindStory, KindSubstory:
+			if childKindOf[kinds[node.ParentID]] != node.Kind {
+				return ErrInvalidParent
+			}
+		default:
+			return ErrInvalidParent
+		}
+	}
+	return nil
 }
