@@ -13,7 +13,10 @@ import {
   MessageBar,
   MessageBarBody,
   Option,
+  Radio,
+  RadioGroup,
   SpinButton,
+  type SpinButtonOnChangeData,
   Spinner,
   Tab,
   TabList,
@@ -25,8 +28,13 @@ import { KindIcon } from '@/components/KindVisuals'
 import type { GenerateOptions } from '@/api'
 import {
   aiCountRange,
+  aiDescendantRange,
+  aiMaxGeneratedNodes,
   aiPromptMaxLength,
   charCount,
+  describeLevelCounts,
+  generationPlan,
+  levelsBelow,
   nodeLabels,
   nodePrompts,
   type CreateTarget,
@@ -36,6 +44,13 @@ import {
 } from '@/model'
 
 type CreateMode = 'manual' | 'ai'
+type GenerateScope = 'children' | 'subtree'
+
+/** Reads a SpinButton change, typed or stepped, clamped to range. */
+function spinValue(data: SpinButtonOnChangeData, range: { min: number; max: number }) {
+  const next = data.value ?? Number.parseInt(data.displayValue ?? '', 10)
+  return Number.isFinite(next) ? Math.min(range.max, Math.max(range.min, Math.round(next))) : undefined
+}
 
 export function CreateDialog({
   target,
@@ -61,6 +76,8 @@ export function CreateDialog({
   const [parentId, setParentId] = useState(target?.parentId ?? parents[0]?.id ?? '')
   const [mode, setMode] = useState<CreateMode>(target?.mode ?? 'manual')
   const [count, setCount] = useState(aiCountRange.default)
+  const [scope, setScope] = useState<GenerateScope>('children')
+  const [descendantCount, setDescendantCount] = useState(aiDescendantRange.default)
   const [prompt, setPrompt] = useState('')
   if (!target) return null
 
@@ -79,13 +96,18 @@ export function CreateDialog({
   const aiMode = canGenerate && mode === 'ai'
   const promptLength = charCount(prompt)
   const promptTooLong = promptLength > aiPromptMaxLength
+  const lowerLevels = kind === 'project' ? [] : levelsBelow(kind)
+  const subtree = lowerLevels.length > 0 && scope === 'subtree'
+  const plan = kind === 'project' ? [] : generationPlan(kind, count, subtree ? descendantCount : undefined)
+  const planTotal = plan.reduce((sum, level) => sum + level.count, 0)
+  const planTooLarge = planTotal > aiMaxGeneratedNodes
   const canSubmit = aiMode
-    ? aiEnabled && Boolean(parentId) && !promptTooLong
+    ? aiEnabled && Boolean(parentId) && !promptTooLong && !planTooLarge
     : Boolean(name.trim()) && (!needsParent || Boolean(parentId))
 
   const submit = () => {
     if (!canSubmit || busy) return
-    if (aiMode) onGenerate(parentId, { count, prompt: prompt.trim() })
+    if (aiMode) onGenerate(parentId, { count, prompt: prompt.trim(), ...(subtree && { descendantCount }) })
     else onSubmit(name.trim(), parentId || undefined)
   }
 
@@ -152,13 +174,52 @@ export function CreateDialog({
                       value={count}
                       disabled={busy || !aiEnabled}
                       onChange={(_event, data) => {
-                        const next = data.value ?? Number.parseInt(data.displayValue ?? '', 10)
-                        if (Number.isFinite(next)) {
-                          setCount(Math.min(aiCountRange.max, Math.max(aiCountRange.min, Math.round(next))))
-                        }
+                        const next = spinValue(data, aiCountRange)
+                        if (next !== undefined) setCount(next)
                       }}
                     />
                   </Field>
+                  {lowerLevels.length > 0 && (
+                    <Field label="生成范围">
+                      <RadioGroup
+                        id="generate-scope"
+                        layout="horizontal"
+                        value={scope}
+                        disabled={busy || !aiEnabled}
+                        onChange={(_event, data) => setScope(data.value as GenerateScope)}
+                      >
+                        <Radio value="children" label={`仅${label}`} />
+                        <Radio value="subtree" label={`${label}及所有下级`} />
+                      </RadioGroup>
+                    </Field>
+                  )}
+                  {subtree && (
+                    <Field
+                      label="每个节点的下级数量"
+                      hint={`${aiDescendantRange.min}–${aiDescendantRange.max} 个，${lowerLevels.map((level) => nodeLabels[level]).join('、')}每层都按此数量展开`}
+                    >
+                      <SpinButton
+                        id="generate-descendant-count"
+                        min={aiDescendantRange.min}
+                        max={aiDescendantRange.max}
+                        value={descendantCount}
+                        disabled={busy || !aiEnabled}
+                        onChange={(_event, data) => {
+                          const next = spinValue(data, aiDescendantRange)
+                          if (next !== undefined) setDescendantCount(next)
+                        }}
+                      />
+                    </Field>
+                  )}
+                  {subtree && (
+                    <MessageBar intent={planTooLarge ? 'error' : 'info'} className="generate-plan">
+                      <MessageBarBody>
+                        {planTooLarge
+                          ? `共 ${planTotal} 个节点，超过单次上限 ${aiMaxGeneratedNodes} 个，请减少数量。`
+                          : `将生成 ${describeLevelCounts(plan)}，共 ${planTotal} 个节点。`}
+                      </MessageBarBody>
+                    </MessageBar>
+                  )}
                   <Field
                     label="附加提示词（可选）"
                     validationState={promptTooLong ? 'error' : 'none'}
@@ -206,7 +267,7 @@ export function CreateDialog({
                   icon={busy ? <Spinner size="tiny" /> : <Sparkle20Filled />}
                   disabled={!canSubmit || busy}
                 >
-                  {busy ? '正在生成…' : `生成 ${count} 个`}
+                  {busy ? '正在生成…' : `生成 ${planTotal} 个`}
                 </Button>
               ) : (
                 <Button type="submit" appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Add20Regular />} disabled={!canSubmit || busy}>

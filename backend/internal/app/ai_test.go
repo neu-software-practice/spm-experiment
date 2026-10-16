@@ -114,6 +114,41 @@ func TestAIHTTPIntegrationIncludesContextAndExtraPrompt(t *testing.T) {
 	}
 }
 
+func TestAIHTTPIntegrationParsesNestedSubtree(t *testing.T) {
+	f := newGenerationFixture(t)
+	observed := make(chan GenerationInput, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []chatMessage `json:"messages"`
+		}
+		var received GenerationInput
+		if json.NewDecoder(r.Body).Decode(&request) != nil || len(request.Messages) != 2 ||
+			json.Unmarshal([]byte(request.Messages[1].Content), &received) != nil {
+			t.Error("unexpected provider request")
+		}
+		observed <- received
+		fmt.Fprint(w, completionJSON(`{"children":[{"name":"上传图片","children":[{"name":"选择本地文件"}]},{"name":"排版正文","children":[{"name":"调整段落"}]}]}`, "stop"))
+	}))
+	defer upstream.Close()
+	router := NewRouter(f.store, testAIGenerator(t, upstream.URL, time.Second))
+	response := performGeneration(router, f.path(f.epic), `{"count":2,"descendantCount":1}`)
+	assertStatus(t, response, http.StatusCreated)
+	received := <-observed
+	if received.ChildKind != KindStory || received.DescendantCount != 1 ||
+		!reflect.DeepEqual(received.DescendantKinds, []NodeKind{KindSubstory}) {
+		t.Fatalf("subtree request missing descendant levels: %#v", received)
+	}
+	project := loadTestProject(t, f)
+	names := make([]string, 0, len(project.Nodes))
+	for _, node := range project.Nodes[4:] {
+		names = append(names, string(node.Kind)+":"+node.Name)
+	}
+	want := []string{"story:上传图片", "substory:选择本地文件", "story:排版正文", "substory:调整段落"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("nested subtree not saved depth first: %v", names)
+	}
+}
+
 func TestAIProviderFailuresDoNotWriteOrLeakDetails(t *testing.T) {
 	validContent := `{"children":[{"name":"步骤一"},{"name":"步骤二"}]}`
 	for _, tc := range []struct {

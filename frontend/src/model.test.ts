@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { charCount, descendantIds, nodeKinds, planReorder, type StoryNode } from './model.ts'
+import {
+  charCount,
+  countByKind,
+  descendantIds,
+  describeLevelCounts,
+  generationPlan,
+  levelsBelow,
+  nodeKinds,
+  planReorder,
+  type StoryNode,
+} from './model.ts'
 import { appSource, styles } from './test-support.ts'
 
 const nodes: StoryNode[] = [
@@ -59,4 +69,28 @@ test('AI generation is wired to the backend contract', () => {
   // The card shortcut only appears when the backend reports AI as configured.
   assert.match(appSource, /onGenerate=\{childKind && props\.aiEnabled/)
   assert.match(appSource, /className="node-ai-action"[\s\S]*title="AI 生成子节点"/)
+})
+
+test('a subtree plan multiplies the descendant count down to the last level', () => {
+  assert.deepEqual(levelsBelow('role'), ['epic', 'story', 'substory'])
+  assert.deepEqual(levelsBelow('substory'), [])
+  assert.deepEqual(generationPlan('epic', 3), [{ kind: 'epic', count: 3 }])
+  const plan = generationPlan('epic', 3, 2)
+  assert.deepEqual(plan, [
+    { kind: 'epic', count: 3 },
+    { kind: 'story', count: 6 },
+    { kind: 'substory', count: 12 },
+  ])
+  assert.equal(describeLevelCounts(plan), '3 个史诗、6 个用户故事、12 个二级故事')
+  assert.deepEqual(generationPlan('substory', 4, 3), [{ kind: 'substory', count: 4 }])
+})
+
+test('generated nodes are summarised per level', () => {
+  const nodes: StoryNode[] = [
+    { id: 'a', kind: 'story', parentId: 'e', name: 'A' },
+    { id: 'b', kind: 'substory', parentId: 'a', name: 'B' },
+    { id: 'c', kind: 'substory', parentId: 'a', name: 'C' },
+  ]
+  assert.equal(describeLevelCounts(countByKind(nodes)), '1 个用户故事、2 个二级故事')
+  assert.equal(describeLevelCounts(countByKind([])), '')
 })

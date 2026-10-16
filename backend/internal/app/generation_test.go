@@ -15,7 +15,18 @@ import (
 
 type generatorFunc func(context.Context, GenerationInput) ([]string, error)
 
-func (f generatorFunc) GenerateChildren(ctx context.Context, input GenerationInput) ([]string, error) {
+func (f generatorFunc) GenerateChildren(ctx context.Context, input GenerationInput) ([]GeneratedNode, error) {
+	names, err := f(ctx, input)
+	nodes := make([]GeneratedNode, len(names))
+	for i, name := range names {
+		nodes[i] = GeneratedNode{Name: name}
+	}
+	return nodes, err
+}
+
+type treeGeneratorFunc func(context.Context, GenerationInput) ([]GeneratedNode, error)
+
+func (f treeGeneratorFunc) GenerateChildren(ctx context.Context, input GenerationInput) ([]GeneratedNode, error) {
 	return f(ctx, input)
 }
 
@@ -372,5 +383,128 @@ func TestCanceledGenerationDoesNotWrite(t *testing.T) {
 	assertStatus(t, response, http.StatusRequestTimeout)
 	if !reflect.DeepEqual(before, loadTestProject(t, f)) {
 		t.Fatal("canceled generation wrote children")
+	}
+}
+
+func generatedTree(prefix string, count, descendantCount, depth int) []GeneratedNode {
+	nodes := make([]GeneratedNode, count)
+	for i := range nodes {
+		name := prefix + string(rune('A'+i))
+		nodes[i] = GeneratedNode{Name: name}
+		if depth > 0 {
+			nodes[i].Children = generatedTree(name+"-", descendantCount, descendantCount, depth-1)
+		}
+	}
+	return nodes
+}
+
+func TestGenerateSubtreeFillsEveryLevelBelow(t *testing.T) {
+	f := newGenerationFixture(t)
+	before := loadTestProject(t, f)
+	var gotInput GenerationInput
+	generator := treeGeneratorFunc(func(_ context.Context, input GenerationInput) ([]GeneratedNode, error) {
+		gotInput = input
+		return generatedTree("节点", 2, 2, 2), nil
+	})
+	response := performGeneration(NewRouter(f.store, generator), f.path(f.role), `{"count":2,"descendantCount":2}`)
+	assertStatus(t, response, http.StatusCreated)
+	if gotInput.ChildKind != KindEpic || gotInput.Count != 2 || gotInput.DescendantCount != 2 ||
+		!reflect.DeepEqual(gotInput.DescendantKinds, []NodeKind{KindStory, KindSubstory}) {
+		t.Fatalf("unexpected subtree input: %#v", gotInput)
+	}
+	var result struct {
+		ParentID string `json:"parentId"`
+		Nodes    []Node `json:"nodes"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ParentID != f.role.ID || len(result.Nodes) != 2+4+8 {
+		t.Fatalf("unexpected subtree result: %d nodes", len(result.Nodes))
+	}
+	byID := map[string]Node{f.role.ID: f.role}
+	counts := map[NodeKind]int{}
+	for _, node := range result.Nodes {
+		parent, ok := byID[node.ParentID]
+		if !ok || childKindOf[parent.Kind] != node.Kind {
+			t.Fatalf("node %q appears before its parent or under the wrong level: %#v", node.Name, node)
+		}
+		byID[node.ID] = node
+		counts[node.Kind]++
+	}
+	if counts[KindEpic] != 2 || counts[KindStory] != 4 || counts[KindSubstory] != 8 {
+		t.Fatalf("unexpected level counts: %#v", counts)
+	}
+	persisted := loadTestProject(t, f)
+	if !reflect.DeepEqual(persisted.Nodes, append(before.Nodes, result.Nodes...)) {
+		t.Fatal("subtree was not appended in one save")
+	}
+}
+
+func TestGenerateSubtreeRejectsMalformedTreesWithoutWrites(t *testing.T) {
+	wrongDeepCount := generatedTree("节点", 2, 2, 2)
+	wrongDeepCount[1].Children[0].Children = wrongDeepCount[1].Children[0].Children[:1]
+	leafWithChildren := generatedTree("节点", 2, 2, 2)
+	leafWithChildren[0].Children[0].Children[0].Children = []GeneratedNode{{Name: "太深"}}
+	duplicateSiblings := generatedTree("节点", 2, 2, 2)
+	duplicateSiblings[0].Children[1].Name = duplicateSiblings[0].Children[0].Name
+	missingLevel := generatedTree("节点", 2, 2, 1)
+	for name, tree := range map[string][]GeneratedNode{
+		"wrong deep count":   wrongDeepCount,
+		"leaf with children": leafWithChildren,
+		"duplicate siblings": duplicateSiblings,
+		"missing level":      missingLevel,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newGenerationFixture(t)
+			before := loadTestProject(t, f)
+			generator := treeGeneratorFunc(func(context.Context, GenerationInput) ([]GeneratedNode, error) { return tree, nil })
+			response := performGeneration(NewRouter(f.store, generator), f.path(f.role), `{"count":2,"descendantCount":2}`)
+			assertStatus(t, response, http.StatusBadGateway)
+			if !reflect.DeepEqual(loadTestProject(t, f).Nodes, before.Nodes) {
+				t.Fatal("malformed subtree was partially saved")
+			}
+		})
+	}
+}
+
+func TestGenerateSubtreeAllowsSameNameUnderDifferentParents(t *testing.T) {
+	f := newGenerationFixture(t)
+	generator := treeGeneratorFunc(func(context.Context, GenerationInput) ([]GeneratedNode, error) {
+		return []GeneratedNode{
+			{Name: "撰写正文", Children: []GeneratedNode{{Name: "保存草稿"}}},
+			{Name: "编辑旧文", Children: []GeneratedNode{{Name: "保存草稿"}}},
+		}, nil
+	})
+	response := performGeneration(NewRouter(f.store, generator), f.path(f.epic), `{"count":2,"descendantCount":1}`)
+	assertStatus(t, response, http.StatusCreated)
+}
+
+func TestGenerateSubtreeValidatesPlanBeforeCallingAI(t *testing.T) {
+	f := newGenerationFixture(t)
+	called := false
+	generator := generatorFunc(func(context.Context, GenerationInput) ([]string, error) {
+		called = true
+		return nil, nil
+	})
+	router := NewRouter(f.store, generator)
+	for _, test := range []struct {
+		parent Node
+		body   string
+	}{
+		{f.role, `{"descendantCount":0}`},
+		{f.role, `{"descendantCount":6}`},
+		{f.story, `{"descendantCount":2}`},
+		{f.role, `{"count":10,"descendantCount":5}`},
+		{f.role, `{"count":5,"descendantCount":4}`},
+	} {
+		assertStatus(t, performGeneration(router, f.path(test.parent), test.body), http.StatusBadRequest)
+	}
+	if called {
+		t.Fatal("AI was called for an invalid subtree plan")
+	}
+	plan, err := generationSnapshot{ChildKind: KindEpic}.plan(4, 4)
+	if err != nil || plan.total() != 4+16+64 {
+		t.Fatalf("largest allowed plan rejected or miscounted: %#v %v", plan, err)
 	}
 }

@@ -32,6 +32,8 @@ type nodeOrderRequest struct {
 type generateChildrenRequest struct {
 	Prompt string `json:"prompt"`
 	Count  *int   `json:"count"`
+	// DescendantCount, when set, also fills every level below the new children.
+	DescendantCount *int `json:"descendantCount"`
 }
 
 func NewRouter(store *Store, generator ChildGenerator) *gin.Engine {
@@ -65,6 +67,14 @@ func NewRouter(store *Store, generator ChildGenerator) *gin.Engine {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "生成数量须为 1 到 10 个"})
 			return
 		}
+		descendantCount := 0
+		if request.DescendantCount != nil {
+			descendantCount = *request.DescendantCount
+			if descendantCount < 1 || descendantCount > maxDescendantCount {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "每个节点的下级数量须为 1 到 5 个"})
+				return
+			}
+		}
 		if !utf8.ValidString(request.Prompt) || utf8.RuneCountInString(request.Prompt) > maxGenerationPrompt {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "附加提示词不能超过 2000 个字符"})
 			return
@@ -79,16 +89,21 @@ func NewRouter(store *Store, generator ChildGenerator) *gin.Engine {
 			respondError(c, err)
 			return
 		}
-		if generator == nil {
-			respondError(c, ErrAIDisabled)
-			return
-		}
-		names, err := generator.GenerateChildren(c.Request.Context(), snapshot.input(count, strings.TrimSpace(request.Prompt)))
+		plan, err := snapshot.plan(count, descendantCount)
 		if err != nil {
 			respondError(c, err)
 			return
 		}
-		nodes, err := store.createGeneratedChildren(c.Request.Context(), project.ID, snapshot, names, count)
+		if generator == nil {
+			respondError(c, ErrAIDisabled)
+			return
+		}
+		generated, err := generator.GenerateChildren(c.Request.Context(), snapshot.input(plan, strings.TrimSpace(request.Prompt)))
+		if err != nil {
+			respondError(c, err)
+			return
+		}
+		nodes, err := store.createGeneratedChildren(c.Request.Context(), project.ID, snapshot, generated, plan)
 		if err != nil {
 			respondError(c, err)
 			return
@@ -204,6 +219,10 @@ func respondError(c *gin.Context, err error) {
 		status, message = http.StatusBadRequest, "节点排序无效"
 	case errors.Is(err, ErrLeafNode):
 		status, message = http.StatusBadRequest, "二级故事已是最末层级，无法生成子节点"
+	case errors.Is(err, ErrNoDescendantLevels):
+		status, message = http.StatusBadRequest, "二级故事下没有更多层级，无需生成下级"
+	case errors.Is(err, ErrTooManyGenerated):
+		status, message = http.StatusBadRequest, "一次最多生成 100 个节点，请减少生成数量"
 	case errors.Is(err, ErrGenerationConflict):
 		status, message = http.StatusConflict, "生成期间节点内容已变化，请重新生成"
 	case errors.Is(err, ErrAIDisabled):

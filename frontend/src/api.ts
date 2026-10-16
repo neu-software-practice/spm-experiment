@@ -34,7 +34,8 @@ const json = (method: string, body: unknown, signal?: AbortSignal): RequestInit 
   signal,
 })
 
-export type GenerateOptions = { count: number; prompt: string }
+/** With descendantCount, every new child also gets that many nodes on each level below it. */
+export type GenerateOptions = { count: number; prompt: string; descendantCount?: number }
 export type GenerateResult = { parentId: string; nodes: StoryNode[] }
 
 export const api = {

@@ -34,10 +34,11 @@ import { StoryMap } from '@/components/StoryMap'
 import {
   childKinds,
   childrenOf,
+  countByKind,
   descendantIds,
+  describeLevelCounts,
   moveNode,
   nodeKinds,
-  nodeLabels,
   parentKinds,
   planReorder,
   type CreateTarget,
@@ -166,11 +167,10 @@ function App() {
       setFreshIds(ids)
       window.setTimeout(() => setFreshIds((current) => current === ids ? new Set() : current), freshHighlightMs)
       setCreateTarget(undefined)
-      const kind = result.nodes[0]?.kind
       notify({
         intent: 'success',
         title: 'AI 生成完成',
-        message: `已新增 ${result.nodes.length} 个${kind ? nodeLabels[kind] : '节点'}。`,
+        message: `已新增 ${describeLevelCounts(countByKind(result.nodes)) || '0 个节点'}。`,
       })
     } catch (reason) {
       if (reason instanceof RequestCancelled) {

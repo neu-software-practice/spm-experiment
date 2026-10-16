@@ -14,12 +14,60 @@ const (
 	maxGenerationCount     = 10
 	maxGenerationPrompt    = 2000
 	maxGeneratedName       = 80
+	maxDescendantCount     = 5
+	maxGeneratedNodes      = 100
 )
 
 var (
 	ErrLeafNode           = errors.New("leaf nodes cannot have children")
 	ErrGenerationConflict = errors.New("generation context changed")
+	ErrNoDescendantLevels = errors.New("the child level has no deeper levels")
+	ErrTooManyGenerated   = errors.New("too many nodes requested")
 )
+
+var childKindOf = map[NodeKind]NodeKind{KindRole: KindEpic, KindEpic: KindStory, KindStory: KindSubstory}
+
+// levelsBelow lists the kinds under kind, nearest first.
+func levelsBelow(kind NodeKind) []NodeKind {
+	var levels []NodeKind
+	for next := childKindOf[kind]; next != ""; next = childKindOf[next] {
+		levels = append(levels, next)
+	}
+	return levels
+}
+
+// generationPlan is how many nodes one request creates: count direct children,
+// then descendantCount children under every node for each deeper level.
+type generationPlan struct {
+	Count           int
+	DescendantKinds []NodeKind
+	DescendantCount int
+}
+
+func (snapshot generationSnapshot) plan(count, descendantCount int) (generationPlan, error) {
+	plan := generationPlan{Count: count}
+	if descendantCount == 0 {
+		return plan, nil
+	}
+	plan.DescendantKinds = levelsBelow(snapshot.ChildKind)
+	if len(plan.DescendantKinds) == 0 {
+		return generationPlan{}, ErrNoDescendantLevels
+	}
+	plan.DescendantCount = descendantCount
+	if plan.total() > maxGeneratedNodes {
+		return generationPlan{}, ErrTooManyGenerated
+	}
+	return plan, nil
+}
+
+func (plan generationPlan) total() int {
+	total, level := 0, plan.Count
+	for depth := 0; depth <= len(plan.DescendantKinds); depth++ {
+		total += level
+		level *= plan.DescendantCount
+	}
+	return total
+}
 
 type generationSnapshot struct {
 	ProjectName string
@@ -35,9 +83,7 @@ func generationContext(project Project, parentID string) (generationSnapshot, er
 		return generationSnapshot{}, ErrNotFound
 	}
 	parent := project.Nodes[index]
-	childKind := map[NodeKind]NodeKind{
-		KindRole: KindEpic, KindEpic: KindStory, KindStory: KindSubstory,
-	}[parent.Kind]
+	childKind := childKindOf[parent.Kind]
 	if childKind == "" {
 		return generationSnapshot{}, ErrLeafNode
 	}
@@ -62,14 +108,16 @@ func generationContext(project Project, parentID string) (generationSnapshot, er
 	return snapshot, nil
 }
 
-func (snapshot generationSnapshot) input(count int, prompt string) GenerationInput {
+func (snapshot generationSnapshot) input(plan generationPlan, prompt string) GenerationInput {
 	input := GenerationInput{
 		ProjectName:      snapshot.ProjectName,
 		Ancestors:        []GenerationNode{},
 		Parent:           GenerationNode{Name: snapshot.Parent.Name, Kind: snapshot.Parent.Kind},
 		ChildKind:        snapshot.ChildKind,
 		ExistingChildren: []string{},
-		Count:            count,
+		Count:            plan.Count,
+		DescendantKinds:  plan.DescendantKinds,
+		DescendantCount:  plan.DescendantCount,
 		Prompt:           prompt,
 	}
 	for _, node := range snapshot.Ancestors {
@@ -83,7 +131,7 @@ func (snapshot generationSnapshot) input(count int, prompt string) GenerationInp
 
 // The model call runs outside the store lock. Revalidate its input before a
 // single atomic save so concurrent edits cannot produce stale/partial children.
-func (s *Store) createGeneratedChildren(ctx context.Context, projectID string, snapshot generationSnapshot, names []string, count int) ([]Node, error) {
+func (s *Store) createGeneratedChildren(ctx context.Context, projectID string, snapshot generationSnapshot, generated []GeneratedNode, plan generationPlan) ([]Node, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -102,23 +150,17 @@ func (s *Store) createGeneratedChildren(ctx context.Context, projectID string, s
 		!slices.Equal(current.Ancestors, snapshot.Ancestors) || !slices.Equal(current.Children, snapshot.Children) {
 		return nil, ErrGenerationConflict
 	}
-	if count < 1 || count > maxGenerationCount || len(names) != count {
+	if plan.Count < 1 || plan.Count > maxGenerationCount {
 		return nil, ErrAIInvalidResponse
 	}
-	seen := make(map[string]bool, len(current.Children)+len(names))
-	for _, node := range current.Children {
-		seen[strings.ToLower(strings.TrimSpace(node.Name))] = true
+	existing := make([]string, len(current.Children))
+	for i, node := range current.Children {
+		existing[i] = node.Name
 	}
-	created := make([]Node, 0, count)
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		key := strings.ToLower(name)
-		if name == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > maxGeneratedName ||
-			strings.ContainsFunc(name, unicode.IsControl) || seen[key] {
-			return nil, ErrAIInvalidResponse
-		}
-		seen[key] = true
-		created = append(created, Node{ID: newID(), Kind: current.ChildKind, ParentID: current.Parent.ID, Name: name})
+	created := make([]Node, 0, plan.total())
+	kinds := append([]NodeKind{current.ChildKind}, plan.DescendantKinds...)
+	if err := appendGeneratedLevel(&created, current.Parent.ID, generated, plan.Count, existing, kinds, plan.DescendantCount); err != nil {
+		return nil, err
 	}
 	previous := project.Nodes
 	project.Nodes = append(append([]Node{}, previous...), created...)
@@ -127,4 +169,37 @@ func (s *Store) createGeneratedChildren(ctx context.Context, projectID string, s
 		return nil, err
 	}
 	return created, nil
+}
+
+// appendGeneratedLevel validates one sibling group and, depth first, the
+// levels under it. Parents land in created before their children.
+func appendGeneratedLevel(created *[]Node, parentID string, generated []GeneratedNode, count int, existing []string, kinds []NodeKind, descendantCount int) error {
+	if len(generated) != count {
+		return ErrAIInvalidResponse
+	}
+	seen := make(map[string]bool, len(existing)+len(generated))
+	for _, name := range existing {
+		seen[strings.ToLower(strings.TrimSpace(name))] = true
+	}
+	for _, item := range generated {
+		name := strings.TrimSpace(item.Name)
+		key := strings.ToLower(name)
+		if name == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > maxGeneratedName ||
+			strings.ContainsFunc(name, unicode.IsControl) || seen[key] {
+			return ErrAIInvalidResponse
+		}
+		seen[key] = true
+		node := Node{ID: newID(), Kind: kinds[0], ParentID: parentID, Name: name}
+		*created = append(*created, node)
+		if len(kinds) == 1 {
+			if len(item.Children) > 0 {
+				return ErrAIInvalidResponse
+			}
+			continue
+		}
+		if err := appendGeneratedLevel(created, node.ID, item.Children, descendantCount, nil, kinds[1:], descendantCount); err != nil {
+			return err
+		}
+	}
+	return nil
 }

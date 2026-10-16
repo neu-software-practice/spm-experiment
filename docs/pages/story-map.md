@@ -25,7 +25,7 @@
 - 新增角色：从头部、空状态或任一角色节点右侧展开的同级加号打开弹窗。
 - 新增子节点：点击节点下方加号，直接以该节点为父节点创建下一层内容；弹窗只要求填写名称。悬停加号时页面保持稳定并显示浏览器提示。
 - 新增同级节点：悬停任一节点后，点击其右侧展开的加号，沿用该节点所属父节点，并紧跟当前节点插入同层内容；若右侧已有节点，新节点位于两者之间。键盘可直接聚焦该按钮，角色行无需父节点；悬停时页面保持稳定并显示浏览器提示。
-- AI 生成子节点：后端已配置 AI 时，悬停有下一级的节点，在新增子节点按钮右侧出现 AI 按钮；也可在新增子节点弹窗中切换到「AI 生成」页签，或在编辑面板的「AI 生成」区域进入。填写生成数量（1–10，默认 3）和可选的附加提示词（最多 2000 字符）后生成，结果直接保存并追加到该父节点已有子节点末尾，新节点短暂高亮，并提示新增数量。生成期间可点「取消生成」或关闭弹窗中止请求，页面随后重新加载项目以反映服务端实际保存的内容。后端未配置 AI 时不显示卡片 AI 按钮，弹窗页签与抽屉入口置灰并说明原因；侧栏底部显示 AI 状态。
+- AI 生成子节点：后端已配置 AI 时，悬停有下一级的节点，在新增子节点按钮右侧出现 AI 按钮；也可在新增子节点弹窗中切换到「AI 生成」页签，或在编辑面板的「AI 生成」区域进入。填写生成数量（1–10，默认 3）和可选的附加提示词（最多 2000 字符）后生成，结果直接保存并追加到该父节点已有子节点末尾，新节点短暂高亮，并按层级提示新增数量。为角色、史诗生成时可在「生成范围」中选择「仅{层级}」或「{层级}及所有下级」：后者一次生成到二级故事层，需再设置每个节点的下级数量（1–5，默认 3，每层都按此数量展开），弹窗实时显示各层与总节点数，超过 100 个时提示并禁用生成。生成期间可点「取消生成」或关闭弹窗中止请求，页面随后重新加载项目以反映服务端实际保存的内容。后端未配置 AI 时不显示卡片 AI 按钮，弹窗页签与抽屉入口置灰并说明原因；侧栏底部显示 AI 状态。
 - 编辑节点：点击节点打开编辑面板，支持保存新名称和删除当前节点及其后代。
 - 拖拽排序：按住节点卡片移动超过 4px 即开始拖拽（触控设备长按 150ms），单击卡片仍打开编辑面板，拖拽结束时不会误触发点击。同级排序只比较节点的水平位置，且只在拖动方向一侧寻找目标，上下移动不会切换同级目标或触发换位；拖动卡片的中心需进入目标同级卡片并越过其宽度的 1/4 才换位（按目标未被挤开时的原始位置判定），仅移出原位或在宽子树之间短距离移动不会换位；拖动经过其他父节点下的同级节点时，卡片仍跟随指针移动；指针直接进入合法的上级节点时，仍可调整所属关系。拖拽期间节点与分支保持原始尺寸，只改变位置。与移动节点或当前吸附目标直接相关、松手后可能改变的连接段显示为虚线，其他分支及移动子树内部的连线保持实线可见；落位后全部连线按最新父子关系恢复实线，且只连接相邻同级节点中心。
 - 项目管理：项目菜单支持重命名和删除；删除操作均需二次确认。
@@ -45,7 +45,7 @@
 | 删除节点及其后代 | `DELETE /api/projects/:projectID/nodes/:nodeID` | 路径参数 `projectID`、`nodeID` | 无，成功状态为 204 | `frontend/src/App.tsx` 的 `deleteNode` | `backend/internal/app/router.go` | 已接入 |
 | 拖拽排序或调整父节点 | `PUT /api/projects/:projectID/nodes/order` | JSON：`nodeId`、`parentId`、`nodeIds` | 无，成功状态为 204 | `frontend/src/App.tsx` 的 `reorderNodes` | `backend/internal/app/router.go` | 已接入 |
 | 判断是否显示 AI 入口 | `GET /api/ai/status` | 无 | `enabled` | `frontend/src/App.tsx` 的初始化加载 | `backend/internal/app/router.go` | 已接入 |
-| AI 生成子节点 | `POST /api/projects/:projectID/nodes/:nodeID/generate-children` | 路径参数 `nodeID` 为父节点；JSON：`count`、`prompt` | `nodes` 及节点字段 | `frontend/src/App.tsx` 的 `generateChildren` | `backend/internal/app/generation.go` | 已接入 |
+| AI 生成子节点 | `POST /api/projects/:projectID/nodes/:nodeID/generate-children` | 路径参数 `nodeID` 为父节点；JSON：`count`、`prompt`、可选 `descendantCount` | `nodes` 及节点字段 | `frontend/src/App.tsx` 的 `generateChildren` | `backend/internal/app/generation.go` | 已接入 |
 
 所有调用统一封装在 `frontend/src/api.ts`。AI 接口说明见后端接口文档的 [AI 状态](../backend-api.md#get-apiaistatus) 与 [AI 生成](../backend-api.md#ai-生成) 部分。
 
@@ -59,9 +59,9 @@
 | 节点下方按钮 | “新增子节点”辅助标签 | 节点支持下一层 | 创建下一层内容 |
 | 节点右侧同级按钮 | “新增同级角色/史诗/用户故事/二级故事”辅助标签 | 鼠标悬停节点、键盘聚焦按钮或使用触控设备 | 创建同层内容 |
 | 节点下方 AI 按钮 | “AI 生成子节点”辅助标签 | 后端已配置 AI 且节点支持下一层 | 打开 AI 生成弹窗 |
-| AI 生成弹窗 | “AI 生成{层级}”“生成 N 个”“正在生成…”“取消生成” | 选择 AI 生成 | 生成或取消 |
+| AI 生成弹窗 | “AI 生成{层级}”“生成范围”“仅{层级}”“{层级}及所有下级”“每个节点的下级数量”“将生成 …，共 N 个节点。”“生成 N 个”“正在生成…”“取消生成” | 选择 AI 生成 | 生成或取消 |
 | AI 未配置提示 | “后端尚未配置 AI 服务，暂时无法生成。” | `enabled` 为 false 时进入 AI 页签 | 配置后端后重试 |
-| 生成成功提示 | “AI 生成完成”“已新增 N 个{层级}。” | 生成成功 | 查看或编辑新节点 |
+| 生成成功提示 | “AI 生成完成”“已新增 N 个{层级}、M 个{下级层级}…。” | 生成成功 | 查看或编辑新节点 |
 | 删除确认 | “确认删除？”及受影响内容说明 | 用户请求删除 | 取消或确认删除 |
 | 错误提示 | 面向用户的失败原因 | 请求失败 | 修正输入或稍后重试 |
 
@@ -119,6 +119,7 @@
 
 | 日期 | 变更 | 关联页面文件 |
 | --- | --- | --- |
+| 2026-10-16 | AI 生成支持「{层级}及所有下级」：一次请求生成到二级故事层，每层按设定数量展开，单次最多 100 个节点，模型返回嵌套结构后由后端整批校验并一次保存；弹窗显示各层预计数量，成功提示按层级汇总。 | `backend/internal/app/ai.go`、`backend/internal/app/generation.go`、`backend/internal/app/router.go`、`backend/internal/app/*_test.go`、`frontend/src/components/Dialogs.tsx`、`frontend/src/model.ts`、`frontend/src/api.ts`、`frontend/src/App.tsx`、`frontend/src/model.test.ts`、`docs/backend-api.md` |
 | 2026-10-16 | 收窄同级换位判定：拖动卡片中心须进入目标同级卡片并越过其宽度 1/4 才换位，此前只要移出原位就与方向上最近的同级换位，史诗间有宽子树时过于敏感；目标按原始布局位置判定，换位动画不会造成来回抖动。 | `frontend/src/drag-collision.ts`、`frontend/src/components/StoryMap.tsx`、`frontend/src/drag-collision.test.ts` |
 | 2026-10-15 | 移除节点卡片右上角的拖拽图标和左下角的类型徽标；整张卡片作为拖拽激活区，单击或 Enter 打开编辑，空格进行键盘拖拽。 | `frontend/src/components/StoryMap.tsx`、`frontend/src/App.css`、`frontend/src/drag-handle-hover.test.ts`、`frontend/src/layout-styles.test.ts` |
 | 2026-10-15 | 重构前端：`App.tsx` 拆分为接口封装、数据模型与侧栏 / 故事地图 / 对话框 / 编辑抽屉组件，四个层级的分支合并为一个递归组件，排序方案计算抽成可测试的纯函数；保留 Fluent 组件风格。为四个层级配置专属图标与颜色，并为新增、编辑、项目文件夹、自动保存、AI 等图标设置语义色。接入 AI 状态与生成子节点接口，提供卡片快捷按钮、新增弹窗页签和编辑抽屉三个入口，支持数量、附加提示词与中途取消。 | `frontend/src/App.tsx`、`frontend/src/App.css`、`frontend/src/api.ts`、`frontend/src/model.ts`、`frontend/src/components/*`、`frontend/src/model.test.ts`、`frontend/src/test-support.ts` |
