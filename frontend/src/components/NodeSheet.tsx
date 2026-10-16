@@ -24,7 +24,7 @@ export function NodeSheet({
   onClose,
   onSave,
   onDelete,
-  onGenerate,
+  onAsk,
 }: {
   node: StoryNode
   parent?: StoryNode
@@ -34,7 +34,8 @@ export function NodeSheet({
   onClose: () => void
   onSave: (name: string) => void
   onDelete: () => void
-  onGenerate: () => void
+  /** Opens the assistant with a draft about this node. */
+  onAsk: (draft: string) => void
 }) {
   const [name, setName] = useState(node.name)
   const dirty = name.trim() !== node.name
@@ -74,28 +75,30 @@ export function NodeSheet({
             </span>
           </div>
         )}
-        {childKind && (
-          <div className="node-ai-panel">
-            <div className="node-ai-panel-heading">
-              <Sparkle20Filled className="icon-ai" />
-              <Text weight="semibold">AI 生成{nodeLabels[childKind]}</Text>
-            </div>
-            <Text size={200} className="muted-text">
-              {aiEnabled
-                ? `根据「${node.name}」及其上级内容自动拆分${nodeLabels[childKind]}，当前已有 ${childCount} 个。`
-                : '后端尚未配置 AI 服务，暂不可用。'}
-            </Text>
-            <Button
-              appearance="secondary"
-              icon={<Sparkle20Filled />}
-              className="ai-secondary-button"
-              disabled={!aiEnabled || busy}
-              onClick={onGenerate}
-            >
-              生成{nodeLabels[childKind]}
-            </Button>
+        <div className="node-ai-panel">
+          <div className="node-ai-panel-heading">
+            <Sparkle20Filled className="icon-ai" />
+            <Text weight="semibold">和 AI 助手一起打磨</Text>
           </div>
-        )}
+          <Text size={200} className="muted-text">
+            {aiEnabled
+              ? childKind
+                ? `在助手里讨论「${node.name}」，让它拆分或调整${nodeLabels[childKind]}（当前 ${childCount} 个），改动会实时出现在地图上。`
+                : `在助手里讨论「${node.name}」的表述，或让它调整位置。`
+              : '后端尚未配置 AI 服务，暂不可用。'}
+          </Text>
+          <Button
+            appearance="secondary"
+            icon={<Sparkle20Filled />}
+            className="ai-secondary-button"
+            disabled={!aiEnabled}
+            onClick={() => onAsk(childKind
+              ? `帮我为「${node.name}」拆分${nodeLabels[childKind]}`
+              : `帮我打磨「${node.name}」的表述`)}
+          >
+            在 AI 助手中讨论
+          </Button>
+        </div>
       </DrawerBody>
       <DrawerFooter className="node-drawer-footer">
         <Button appearance="primary" icon={busy ? <Spinner size="tiny" /> : <Save20Regular />} onClick={() => onSave(name.trim())} disabled={!dirty || !name.trim() || busy}>

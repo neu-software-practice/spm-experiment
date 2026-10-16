@@ -32,17 +32,17 @@ go run ./cmd/server
 | `PORT` | `8080` | HTTP 服务监听端口。前端开发代理默认指向该端口。 |
 | `DATA_FILE` | `data/spm.json` | JSON 数据文件；相对路径以服务启动目录为基准。文件不存在时创建示例项目，不应由多个服务进程同时使用。 |
 | `AI_API_KEY` | 空 | AI 服务密钥，仅在服务端使用。 |
-| `AI_MODEL` | 空 | 服务提供商支持的模型名称，需支持 Chat Completions 文本输出和 JSON 模式。 |
+| `AI_MODEL` | 空 | 服务提供商支持的模型名称，需支持 Chat Completions 的流式输出与函数调用（tools）。 |
 | `AI_BASE_URL` | `https://api.openai.com/v1` | 兼容接口的基础地址；保留提供商要求的版本前缀，服务会拼接 `/chat/completions`。支持 HTTP/HTTPS，不允许内嵌账号密码、查询参数或 fragment。 |
-| `AI_TIMEOUT` | `60s` | 单次 AI 请求总超时，含读取响应；须大于 0、不超过 `2m`，例如 `45s`。 |
+| `AI_TIMEOUT` | `3m` | 单次模型调用（含流式读取）的总超时；须大于 0、不超过 `5m`。一轮助手对话可能包含多次调用。另有固定的 45 秒无数据判定卡住并自动重试。 |
 
 `AI_API_KEY` 与 `AI_MODEL` 都为空时禁用 AI；只配置其中一项或使用无效配置时启动失败。没有默认模型，以便部署时选择实际可用的模型。
 
-接入采用 [Chat Completions 官方协议](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/)，使用 `messages`、`model`、`response_format: {"type":"json_object"}` 与 Bearer 鉴权。此处选用 Chat Completions 是为了支持兼容该协议的服务商；不能直接连接只提供其他协议的接口。实际输出仍需通过后端校验。
+接入采用 [Chat Completions 官方协议](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/)，使用 `messages`、`model`、`tools`、`stream: true` 与 Bearer 鉴权；模型返回的 `reasoning_content`（若有）会作为思考过程转发给前端。此处选用 Chat Completions 是为了支持兼容该协议的服务商；不能直接连接只提供其他协议的接口。已用 StepFun `step-5-preview`（`https://api.stepfun.com/step_plan/v1`）验证端到端流程。
 
 ## 接口文档维护
 
-[完整后端接口文档](../docs/backend-api.md) 包含健康检查、项目管理、节点增删改与排序、AI 状态和子节点生成接口。调整后端接口时，在同一次提交中同步该文档的参数、返回值、错误码及示例；配置变化同步本页及 `.env.example`。
+[完整后端接口文档](../docs/backend-api.md) 包含健康检查、项目管理、节点增删改与排序、AI 状态和 AI 助手对话接口。调整后端接口时，在同一次提交中同步该文档的参数、返回值、错误码及示例；配置变化同步本页及 `.env.example`。
 
 ## 验证
 

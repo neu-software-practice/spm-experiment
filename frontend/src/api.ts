@@ -1,3 +1,4 @@
+import { parseEventStream, type AssistantEvent, type ChatMessage } from './assistant.ts'
 import type { Project, StoryNode } from './model.ts'
 
 export class RequestCancelled extends Error {
@@ -34,10 +35,6 @@ const json = (method: string, body: unknown, signal?: AbortSignal): RequestInit 
   signal,
 })
 
-/** With descendantCount, every new child also gets that many nodes on each level below it. */
-export type GenerateOptions = { count: number; prompt: string; descendantCount?: number }
-export type GenerateResult = { parentId: string; nodes: StoryNode[] }
-
 export const api = {
   aiStatus: () => request<{ enabled: boolean }>('/api/ai/status'),
 
@@ -58,9 +55,43 @@ export const api = {
   reorderNodes: (projectId: string, body: { nodeId: string; parentId: string; nodeIds: string[] }) =>
     request<void>(`/api/projects/${projectId}/nodes/order`, json('PUT', body)),
 
-  generateChildren: (projectId: string, nodeId: string, options: GenerateOptions, signal?: AbortSignal) =>
-    request<GenerateResult>(
-      `/api/projects/${projectId}/nodes/${nodeId}/generate-children`,
-      json('POST', options, signal),
-    ),
+  replaceNodes: (projectId: string, nodes: StoryNode[]) =>
+    request<Project>(`/api/projects/${projectId}/nodes`, json('PUT', { nodes })),
+
+  /** Runs one assistant turn, calling onEvent for each streamed event until the turn ends. */
+  async chat(
+    projectId: string,
+    body: { messages: ChatMessage[]; input: string },
+    onEvent: (event: AssistantEvent) => void,
+    signal: AbortSignal,
+  ) {
+    let response: Response
+    try {
+      response = await fetch(`/api/projects/${projectId}/assistant/chat`, {
+        ...json('POST', body, signal),
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      })
+    } catch (reason) {
+      if (signal.aborted) throw new RequestCancelled()
+      throw reason instanceof Error ? new Error('无法连接服务，请检查网络后重试') : reason
+    }
+    if (!response.ok || !response.body) {
+      const error = (await response.json().catch(() => null)) as { error?: string } | null
+      throw new Error(error?.error ?? 'AI 助手暂时不可用，请稍后重试')
+    }
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+    let buffer = ''
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        const parsed = parseEventStream(buffer + value)
+        buffer = parsed.rest
+        parsed.events.forEach(onEvent)
+      }
+    } catch (reason) {
+      if (signal.aborted) throw new RequestCancelled()
+      throw reason instanceof Error ? new Error('与 AI 助手的连接中断') : reason
+    }
+  },
 }

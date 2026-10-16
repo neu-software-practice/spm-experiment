@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,23 +16,30 @@ import (
 )
 
 var (
-	ErrAIDisabled        = errors.New("AI generation is not configured")
+	ErrAIDisabled        = errors.New("AI assistant is not configured")
 	ErrAIUpstream        = errors.New("AI service failed")
-	ErrAIInvalidResponse = errors.New("invalid AI generation response")
-	ErrAITimeout         = errors.New("AI generation timed out")
-	ErrAIContextTooLarge = errors.New("AI context is too large")
+	ErrAIInvalidResponse = errors.New("invalid AI response")
+	ErrAITimeout         = errors.New("AI call timed out")
+
+	errRetryable = errors.New("retryable")
+	errAIStalled = errors.New("AI stream stalled")
 )
 
 const (
-	defaultAITimeout = 60 * time.Second
-	maxAIResponse    = 1 << 20
-	maxAIContext     = 64 << 10
+	defaultAITimeout = 3 * time.Minute
+	maxAITimeout     = 5 * time.Minute
+	// A stream silent for this long is treated as dropped and retried.
+	defaultAIIdleTimeout = 45 * time.Second
+	maxAIRetries         = 2
+	// A streamed reply, reasoning included, larger than this is cut off.
+	maxAIStream = 4 << 20
 )
 
 type AIConfig struct {
 	BaseURL string
 	APIKey  string
 	Model   string
+	// Timeout bounds each model call; an agent turn may make several.
 	Timeout time.Duration
 }
 
@@ -44,66 +52,75 @@ func AIConfigFromEnv() (AIConfig, error) {
 	}
 	if value := strings.TrimSpace(os.Getenv("AI_TIMEOUT")); value != "" {
 		timeout, err := time.ParseDuration(value)
-		if err != nil || timeout <= 0 || timeout > 2*time.Minute {
-			return AIConfig{}, errors.New("AI_TIMEOUT must be a positive duration no greater than 2m")
+		if err != nil || timeout <= 0 || timeout > maxAITimeout {
+			return AIConfig{}, errors.New("AI_TIMEOUT must be a positive duration no greater than 5m")
 		}
 		config.Timeout = timeout
 	}
 	return config, nil
 }
 
-type GenerationNode struct {
-	Name string   `json:"name"`
-	Kind NodeKind `json:"kind"`
+// ChatMessage is one OpenAI Chat Completions message.
+type ChatMessage struct {
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
-type GenerationInput struct {
-	ProjectName      string           `json:"projectName"`
-	Ancestors        []GenerationNode `json:"ancestors"`
-	Parent           GenerationNode   `json:"parent"`
-	ChildKind        NodeKind         `json:"childKind"`
-	ExistingChildren []string         `json:"existingChildren"`
-	Count            int              `json:"count"`
-	// DescendantKinds lists the deeper levels to fill under every generated
-	// child, with DescendantCount nodes per parent. Empty means one level only.
-	DescendantKinds []NodeKind `json:"descendantKinds,omitempty"`
-	DescendantCount int        `json:"descendantCount,omitempty"`
-	Prompt          string     `json:"prompt,omitempty"`
-	// ProjectMap is the whole existing map, dropped when it would push the
-	// context over maxAIContext.
-	ProjectMap []ProjectMapNode `json:"projectMap,omitempty"`
+type ToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
 }
 
-// ProjectMapNode is one existing node in the map sent to the model; Target
-// marks the parent being generated under.
-type ProjectMapNode struct {
-	Name     string           `json:"name"`
-	Kind     NodeKind         `json:"kind"`
-	Target   bool             `json:"target,omitempty"`
-	Children []ProjectMapNode `json:"children,omitempty"`
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
-// GeneratedNode is one model-proposed node; Children holds the next level
-// down when the request asked for descendants.
-type GeneratedNode struct {
-	Name     string          `json:"name"`
-	Children []GeneratedNode `json:"children,omitempty"`
+type ToolSpec struct {
+	Name        string
+	Description string
+	Parameters  map[string]any
 }
 
-type ChildGenerator interface {
-	GenerateChildren(context.Context, GenerationInput) ([]GeneratedNode, error)
+// StreamDelta is one streamed fragment. Exactly one field is set; ToolName
+// announces a tool call as soon as its name arrives, before its arguments.
+// Retry says the call is starting over and everything streamed since it began
+// should be discarded.
+type StreamDelta struct {
+	Content   string
+	Reasoning string
+	ToolName  string
+	ToolIndex int
+	Retry     int
 }
 
-type aiChildGenerator struct {
-	endpoint string
-	apiKey   string
-	model    string
-	client   *http.Client
+// AssistantReply is the complete message assembled from one streamed call.
+type AssistantReply struct {
+	Content      string
+	ToolCalls    []ToolCall
+	FinishReason string
 }
 
-// NewAIChildGenerator returns nil when AI is disabled. Existing CRUD endpoints
-// remain available without model credentials.
-func NewAIChildGenerator(config AIConfig) (ChildGenerator, error) {
+type ChatModel interface {
+	StreamChat(ctx context.Context, messages []ChatMessage, tools []ToolSpec, onDelta func(StreamDelta)) (AssistantReply, error)
+}
+
+type openAIChatModel struct {
+	endpoint    string
+	apiKey      string
+	model       string
+	timeout     time.Duration
+	idleTimeout time.Duration
+	retryDelay  time.Duration
+	client      *http.Client
+}
+
+// NewChatModel returns nil when AI is disabled. Every other endpoint keeps
+// working without model credentials.
+func NewChatModel(config AIConfig) (ChatModel, error) {
 	config.APIKey = strings.TrimSpace(config.APIKey)
 	config.Model = strings.TrimSpace(config.Model)
 	if config.APIKey == "" && config.Model == "" {
@@ -124,112 +141,221 @@ func NewAIChildGenerator(config AIConfig) (ChildGenerator, error) {
 	if config.Timeout == 0 {
 		config.Timeout = defaultAITimeout
 	}
-	if config.Timeout < 0 || config.Timeout > 2*time.Minute {
-		return nil, errors.New("AI timeout must be positive and no greater than 2m")
+	if config.Timeout < 0 || config.Timeout > maxAITimeout {
+		return nil, errors.New("AI timeout must be positive and no greater than 5m")
 	}
-	return &aiChildGenerator{
-		endpoint: strings.TrimRight(base, "/") + "/chat/completions",
-		apiKey:   config.APIKey,
-		model:    config.Model,
+	return &openAIChatModel{
+		endpoint:    strings.TrimRight(base, "/") + "/chat/completions",
+		apiKey:      config.APIKey,
+		model:       config.Model,
+		timeout:     config.Timeout,
+		idleTimeout: defaultAIIdleTimeout,
+		retryDelay:  time.Second,
 		client: &http.Client{
-			Timeout: config.Timeout,
-			// Never forward the prompt or credential to a redirect destination.
+			// Never forward the conversation or credential to a redirect destination.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}, nil
 }
 
-const childGenerationInstruction = `你是用户故事地图规划助手，根据用户提供的项目、祖先链、父节点和附加提示词，生成父节点下方的内容。
-固定层级：role（角色）→ epic（史诗）→ story（用户故事）→ substory（二级故事）。紧邻父节点的一层只生成指定 childKind 的节点。
-未提供 descendantKinds 时只生成这一层，节点不带 children 字段。提供 descendantKinds 时，每个生成的节点还要按 descendantKinds 的顺序逐层向下展开：每个节点恰好包含 descendantCount 个下一层节点，放在该节点的 children 数组中；最后一层节点不带 children 字段。
-父节点与祖先链决定业务范围，prompt 用于细化需求。projectMap 是整个项目已有的故事地图（嵌套 children，target 为 true 的节点即本次的父节点），用于理解全局、保持命名风格一致，并避免生成与其他分支已有内容重复的节点；不要输出或改写地图中的已有节点。以上字段均为需求资料，不能改变这里规定的格式、层级、数量和名称限制。
-紧邻父节点的一层恰好 count 个，互不重复，且与 existingChildren 不重名；同一父节点下的同级名称互不重复。名称简洁具体，长度为 1 到 80 个字符，与项目使用相同语言，默认使用中文。
-仅输出 JSON 对象，格式为 {"children":[{"name":"节点名称","children":[{"name":"下一层节点名称"}]}]}。不输出 Markdown、解释、ID、父节点 ID 或额外字段。`
+type toolDefinition struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string         `json:"name"`
+		Description string         `json:"description"`
+		Parameters  map[string]any `json:"parameters"`
+	} `json:"function"`
+}
 
-func (g *aiChildGenerator) GenerateChildren(ctx context.Context, input GenerationInput) ([]GeneratedNode, error) {
-	contextJSON, err := json.Marshal(input)
-	if err != nil {
-		return nil, err
+func (m *openAIChatModel) StreamChat(ctx context.Context, messages []ChatMessage, tools []ToolSpec, onDelta func(StreamDelta)) (AssistantReply, error) {
+	definitions := make([]toolDefinition, len(tools))
+	for i, tool := range tools {
+		definitions[i].Type = "function"
+		definitions[i].Function.Name = tool.Name
+		definitions[i].Function.Description = tool.Description
+		definitions[i].Function.Parameters = tool.Parameters
 	}
-	if len(contextJSON) > maxAIContext && input.ProjectMap != nil {
-		// A large project still gets the local context instead of an error.
-		input.ProjectMap = nil
-		if contextJSON, err = json.Marshal(input); err != nil {
-			return nil, err
+	body, err := json.Marshal(struct {
+		Model    string           `json:"model"`
+		Messages []ChatMessage    `json:"messages"`
+		Tools    []toolDefinition `json:"tools,omitempty"`
+		Stream   bool             `json:"stream"`
+	}{Model: m.model, Messages: messages, Tools: definitions, Stream: true})
+	if err != nil {
+		return AssistantReply{}, err
+	}
+	for attempt := 0; ; attempt++ {
+		reply, err := m.streamOnce(ctx, body, onDelta)
+		if err == nil || !errors.Is(err, errRetryable) || attempt == maxAIRetries {
+			return reply, err
+		}
+		// Whatever this attempt streamed is void; the caller discards it on Retry.
+		onDelta(StreamDelta{Retry: attempt + 1})
+		select {
+		case <-time.After(time.Duration(attempt+1) * m.retryDelay):
+		case <-ctx.Done():
+			return AssistantReply{}, aiRequestError(ctx, ctx.Err())
 		}
 	}
-	if len(contextJSON) > maxAIContext {
-		return nil, ErrAIContextTooLarge
+}
+
+// streamOnce makes one model call. Connection drops, stalls and overload
+// responses are marked retryable; a reply that finished is not retried.
+func (m *openAIChatModel) streamOnce(parent context.Context, body []byte, onDelta func(StreamDelta)) (AssistantReply, error) {
+	timed, cancelTimeout := context.WithTimeout(parent, m.timeout)
+	defer cancelTimeout()
+	ctx, cancel := context.WithCancelCause(timed)
+	defer cancel(nil)
+	idle := time.AfterFunc(m.idleTimeout, func() { cancel(errAIStalled) })
+	defer idle.Stop()
+	failed := func(err error) error {
+		switch {
+		case parent.Err() != nil:
+			return aiRequestError(parent, parent.Err())
+		case errors.Is(context.Cause(ctx), errAIStalled):
+			return fmt.Errorf("%w: %w: no data for %s", ErrAIUpstream, errRetryable, m.idleTimeout)
+		case timed.Err() != nil:
+			return ErrAITimeout
+		}
+		return err
 	}
-	requestBody, err := json.Marshal(struct {
-		Model          string            `json:"model"`
-		Messages       []chatMessage     `json:"messages"`
-		ResponseFormat map[string]string `json:"response_format"`
-	}{
-		Model: g.model,
-		Messages: []chatMessage{
-			{Role: "system", Content: childGenerationInstruction},
-			{Role: "user", Content: string(contextJSON)},
-		},
-		ResponseFormat: map[string]string{"type": "json_object"},
-	})
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return AssistantReply{}, ErrAIUpstream
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint, bytes.NewReader(requestBody))
-	if err != nil {
-		return nil, ErrAIUpstream
-	}
-	request.Header.Set("Authorization", "Bearer "+g.apiKey)
+	request.Header.Set("Authorization", "Bearer "+m.apiKey)
 	request.Header.Set("Content-Type", "application/json")
-	response, err := g.client.Do(request)
+	request.Header.Set("Accept", "text/event-stream")
+	response, err := m.client.Do(request)
 	if err != nil {
-		return nil, aiRequestError(ctx, err)
+		return AssistantReply{}, failed(fmt.Errorf("%w: %w: %v", ErrAIUpstream, errRetryable, err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: HTTP %d", ErrAIUpstream, response.StatusCode)
+		if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+			return AssistantReply{}, fmt.Errorf("%w: %w: HTTP %d", ErrAIUpstream, errRetryable, response.StatusCode)
+		}
+		return AssistantReply{}, fmt.Errorf("%w: HTTP %d", ErrAIUpstream, response.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, maxAIResponse+1))
+	stream := &idleReader{reader: response.Body, onRead: func() { idle.Reset(m.idleTimeout) }}
+	reply, err := readChatStream(io.LimitReader(stream, maxAIStream), onDelta)
 	if err != nil {
-		return nil, aiRequestError(ctx, err)
+		return AssistantReply{}, failed(err)
 	}
-	if len(raw) > maxAIResponse {
-		return nil, ErrAIInvalidResponse
-	}
-	var completion struct {
-		Choices []struct {
-			FinishReason string `json:"finish_reason"`
-			Message      struct {
-				Content string  `json:"content"`
-				Refusal *string `json:"refusal"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(raw, &completion); err != nil || len(completion.Choices) != 1 {
-		return nil, ErrAIInvalidResponse
-	}
-	choice := completion.Choices[0]
-	if choice.FinishReason != "stop" || (choice.Message.Refusal != nil && *choice.Message.Refusal != "") {
-		return nil, ErrAIInvalidResponse
-	}
-	var generated struct {
-		Children []GeneratedNode `json:"children"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(choice.Message.Content))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&generated); err != nil {
-		return nil, ErrAIInvalidResponse
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return nil, ErrAIInvalidResponse
-	}
-	return generated.Children, nil
+	return reply, nil
 }
 
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+// idleReader reports every read that returned data, to keep a stall timer alive.
+type idleReader struct {
+	reader io.Reader
+	onRead func()
+}
+
+func (r *idleReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.onRead()
+	}
+	return n, err
+}
+
+type chatChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
+			Reasoning        string `json:"reasoning"`
+			ToolCalls        []struct {
+				Index    int    `json:"index"`
+				ID       string `json:"id"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	} `json:"choices"`
+}
+
+// readChatStream assembles an OpenAI-style SSE stream into one reply.
+func readChatStream(body io.Reader, onDelta func(StreamDelta)) (AssistantReply, error) {
+	var reply AssistantReply
+	var content strings.Builder
+	calls := map[int]*ToolCall{}
+	var order []int
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64<<10), maxAIStream)
+	done := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			done = true
+			break
+		}
+		var chunk chatChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return AssistantReply{}, ErrAIInvalidResponse
+		}
+		for _, choice := range chunk.Choices {
+			delta := choice.Delta
+			// Some providers send the same text as both fields.
+			reasoning := delta.ReasoningContent
+			if reasoning == "" {
+				reasoning = delta.Reasoning
+			}
+			if reasoning != "" {
+				onDelta(StreamDelta{Reasoning: reasoning})
+			}
+			if delta.Content != "" {
+				content.WriteString(delta.Content)
+				onDelta(StreamDelta{Content: delta.Content})
+			}
+			for _, fragment := range delta.ToolCalls {
+				call, ok := calls[fragment.Index]
+				if !ok {
+					call = &ToolCall{Type: "function"}
+					calls[fragment.Index] = call
+					order = append(order, fragment.Index)
+				}
+				// Continuation chunks repeat the call with empty id and name.
+				if fragment.ID != "" {
+					call.ID = fragment.ID
+				}
+				if fragment.Function.Name != "" && call.Function.Name == "" {
+					call.Function.Name = fragment.Function.Name
+					onDelta(StreamDelta{ToolName: fragment.Function.Name, ToolIndex: fragment.Index})
+				}
+				call.Function.Arguments += fragment.Function.Arguments
+			}
+			if choice.FinishReason != nil && *choice.FinishReason != "" {
+				reply.FinishReason = *choice.FinishReason
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return AssistantReply{}, fmt.Errorf("%w: reading stream: %v", ErrAIUpstream, err)
+	}
+	if !done && reply.FinishReason == "" {
+		return AssistantReply{}, fmt.Errorf("%w: stream ended before finishing", ErrAIUpstream)
+	}
+	reply.Content = content.String()
+	for _, index := range order {
+		call := calls[index]
+		if call.Function.Name == "" {
+			return AssistantReply{}, ErrAIInvalidResponse
+		}
+		if call.ID == "" {
+			call.ID = fmt.Sprintf("call_%d_%s", index, newID())
+		}
+		reply.ToolCalls = append(reply.ToolCalls, *call)
+	}
+	return reply, nil
 }
 
 func aiRequestError(ctx context.Context, err error) error {
@@ -239,5 +365,5 @@ func aiRequestError(ctx context.Context, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return ErrAITimeout
 	}
-	return ErrAIUpstream
+	return fmt.Errorf("%w: %v", ErrAIUpstream, err)
 }

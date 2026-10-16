@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,14 +29,16 @@ type nodeOrderRequest struct {
 	NodeIDs  []string `json:"nodeIds"`
 }
 
-type generateChildrenRequest struct {
-	Prompt string `json:"prompt"`
-	Count  *int   `json:"count"`
-	// DescendantCount, when set, also fills every level below the new children.
-	DescendantCount *int `json:"descendantCount"`
+type assistantChatRequest struct {
+	Messages []ChatMessage `json:"messages"`
+	Input    string        `json:"input"`
 }
 
-func NewRouter(store *Store, generator ChildGenerator) *gin.Engine {
+type replaceNodesRequest struct {
+	Nodes []Node `json:"nodes"`
+}
+
+func NewRouter(store *Store, model ChatModel) *gin.Engine {
 	router := gin.Default()
 	router.GET("/api/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -44,71 +46,66 @@ func NewRouter(store *Store, generator ChildGenerator) *gin.Engine {
 
 	api := router.Group("/api")
 	api.GET("/ai/status", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"enabled": generator != nil})
+		c.JSON(http.StatusOK, gin.H{"enabled": model != nil})
 	})
-	api.POST("/projects/:projectID/nodes/:nodeID/generate-children", func(c *gin.Context) {
-		var request *generateChildrenRequest
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-		decoder := json.NewDecoder(c.Request.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&request); err != nil || request == nil {
+	api.POST("/projects/:projectID/assistant/chat", func(c *gin.Context) {
+		var request assistantChatRequest
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+		if err := json.NewDecoder(c.Request.Body).Decode(&request); err != nil {
 			respondInvalidJSON(c)
 			return
 		}
-		if err := decoder.Decode(new(any)); err != io.EOF {
-			respondInvalidJSON(c)
+		request.Input = strings.TrimSpace(request.Input)
+		if !validAssistantInput(request.Input) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "消息不能为空，且不能超过 4000 个字符"})
 			return
 		}
-		count := defaultGenerationCount
-		if request.Count != nil {
-			count = *request.Count
-		}
-		if count < 1 || count > maxGenerationCount {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "生成数量须为 1 到 10 个"})
+		if validateHistory(request.Messages) != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "对话记录无效，请开始新对话"})
 			return
 		}
-		descendantCount := 0
-		if request.DescendantCount != nil {
-			descendantCount = *request.DescendantCount
-			if descendantCount < 1 || descendantCount > maxDescendantCount {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "每个节点的下级数量须为 1 到 5 个"})
-				return
-			}
-		}
-		if !utf8.ValidString(request.Prompt) || utf8.RuneCountInString(request.Prompt) > maxGenerationPrompt {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "附加提示词不能超过 2000 个字符"})
-			return
-		}
-		project, err := store.Project(c.Param("projectID"))
-		if err != nil {
+		if _, err := store.Project(c.Param("projectID")); err != nil {
 			respondError(c, err)
 			return
 		}
-		snapshot, err := generationContext(project, c.Param("nodeID"))
-		if err != nil {
-			respondError(c, err)
-			return
-		}
-		plan, err := snapshot.plan(count, descendantCount)
-		if err != nil {
-			respondError(c, err)
-			return
-		}
-		if generator == nil {
+		if model == nil {
 			respondError(c, ErrAIDisabled)
 			return
 		}
-		generated, err := generator.GenerateChildren(c.Request.Context(), snapshot.input(plan, strings.TrimSpace(request.Prompt)))
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("X-Accel-Buffering", "no")
+		c.Status(http.StatusOK)
+		send := func(event AssistantEvent) {
+			data, _ := json.Marshal(event.Data)
+			fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event.Name, data)
+			c.Writer.Flush()
+		}
+		send(AssistantEvent{"start", gin.H{}})
+		assistant := &Assistant{store: store, model: model}
+		messages, err := assistant.RunTurn(c.Request.Context(), c.Param("projectID"), request.Messages, request.Input, send)
+		if err != nil {
+			// Provider errors carry no secrets; the detail helps diagnose a failed turn.
+			log.Printf("assistant turn failed: %v", err)
+			_, message := errorResponse(err)
+			send(AssistantEvent{"error", gin.H{"error": message, "messages": messages}})
+			return
+		}
+		send(AssistantEvent{"done", gin.H{"messages": messages}})
+	})
+	api.PUT("/projects/:projectID/nodes", func(c *gin.Context) {
+		var request replaceNodesRequest
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+		if err := json.NewDecoder(c.Request.Body).Decode(&request); err != nil || request.Nodes == nil {
+			respondInvalidJSON(c)
+			return
+		}
+		project, err := store.ReplaceNodes(c.Param("projectID"), request.Nodes)
 		if err != nil {
 			respondError(c, err)
 			return
 		}
-		nodes, err := store.createGeneratedChildren(c.Request.Context(), project.ID, snapshot, generated, plan)
-		if err != nil {
-			respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusCreated, gin.H{"parentId": snapshot.Parent.ID, "nodes": nodes})
+		c.JSON(http.StatusOK, project)
 	})
 	api.GET("/projects", func(c *gin.Context) {
 		c.JSON(http.StatusOK, store.Projects())
@@ -206,6 +203,11 @@ func NewRouter(store *Store, generator ChildGenerator) *gin.Engine {
 }
 
 func respondError(c *gin.Context, err error) {
+	status, message := errorResponse(err)
+	c.JSON(status, gin.H{"error": message})
+}
+
+func errorResponse(err error) (int, string) {
 	status := http.StatusInternalServerError
 	message := "服务器暂时无法处理请求"
 	switch {
@@ -213,32 +215,24 @@ func respondError(c *gin.Context, err error) {
 		status, message = http.StatusNotFound, "未找到对应内容"
 	case errors.Is(err, ErrInvalidName):
 		status, message = http.StatusBadRequest, "名称不能为空"
+	case errors.Is(err, ErrNameTooLong):
+		status, message = http.StatusBadRequest, "名称不能超过 80 个字符"
 	case errors.Is(err, ErrInvalidParent):
 		status, message = http.StatusBadRequest, "节点层级关系无效"
 	case errors.Is(err, ErrInvalidOrder):
 		status, message = http.StatusBadRequest, "节点排序无效"
-	case errors.Is(err, ErrLeafNode):
-		status, message = http.StatusBadRequest, "二级故事已是最末层级，无法生成子节点"
-	case errors.Is(err, ErrNoDescendantLevels):
-		status, message = http.StatusBadRequest, "二级故事下没有更多层级，无需生成下级"
-	case errors.Is(err, ErrTooManyGenerated):
-		status, message = http.StatusBadRequest, "一次最多生成 100 个节点，请减少生成数量"
-	case errors.Is(err, ErrGenerationConflict):
-		status, message = http.StatusConflict, "生成期间节点内容已变化，请重新生成"
 	case errors.Is(err, ErrAIDisabled):
-		status, message = http.StatusServiceUnavailable, "AI 生成功能尚未配置"
-	case errors.Is(err, ErrAIContextTooLarge):
-		status, message = http.StatusBadRequest, "当前节点上下文过长，请精简内容后再试"
+		status, message = http.StatusServiceUnavailable, "AI 助手尚未配置"
 	case errors.Is(err, ErrAITimeout), errors.Is(err, context.DeadlineExceeded):
-		status, message = http.StatusGatewayTimeout, "AI 生成超时，请稍后重试"
+		status, message = http.StatusGatewayTimeout, "AI 响应超时，请稍后重试"
 	case errors.Is(err, context.Canceled):
-		status, message = http.StatusRequestTimeout, "生成请求已取消"
+		status, message = http.StatusRequestTimeout, "请求已取消"
 	case errors.Is(err, ErrAIInvalidResponse):
-		status, message = http.StatusBadGateway, "AI 返回的内容不符合节点要求，请调整提示词后重试"
+		status, message = http.StatusBadGateway, "AI 返回的内容无法解析，请重试"
 	case errors.Is(err, ErrAIUpstream):
-		status, message = http.StatusBadGateway, "AI 服务暂时无法生成内容，请稍后重试"
+		status, message = http.StatusBadGateway, "AI 服务暂时不可用，请稍后重试"
 	}
-	c.JSON(status, gin.H{"error": message})
+	return status, message
 }
 
 func respondInvalidJSON(c *gin.Context) {
